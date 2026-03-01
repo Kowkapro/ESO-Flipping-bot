@@ -67,12 +67,14 @@ def get_screen_regions():
         hook_size
     )
 
-    # Loot window appears in bottom-right
-    loot_w = int(screen_w * 0.35)
-    loot_h = int(screen_h * 0.45)
+    # Loot window appears in right-center area of screen
+    loot_x = int(screen_w * 0.55)
+    loot_y = int(screen_h * 0.30)
+    loot_w = int(screen_w * 0.30)
+    loot_h = int(screen_h * 0.40)
     SCAN_REGION_LOOT = (
-        screen_w - loot_w,
-        screen_h - loot_h,
+        loot_x,
+        loot_y,
         loot_w,
         loot_h
     )
@@ -192,17 +194,18 @@ def fishing_loop():
         print(f"[{cast_count}] HOOK! Reeling in...")
         press_key(CAST_KEY)
 
-        # Step 4: Wait for loot window
+        # Step 4: Wait for loot window to appear
+        print(f"[{cast_count}] Waiting for loot window...")
         human_delay(DELAY_AFTER_REEL)
-        if wait_for_loot():
-            # Step 5: Loot (press R) then recast (press E)
-            fish_count += 1
-            print(f"[{cast_count}] Caught fish #{fish_count}! Looting...")
-            press_key(LOOT_KEY)
-            human_delay(DELAY_AFTER_LOOT)
-        else:
-            print(f"[{cast_count}] No loot window, continuing...")
-            human_delay(DELAY_RECAST)
+
+        # Step 5: Loot (press R)
+        fish_count += 1
+        print(f"[{cast_count}] Fish #{fish_count}! Pressing R to loot...")
+        press_key(LOOT_KEY)
+        time.sleep(0.3)
+        # Press R again in case first one didn't register
+        press_key(LOOT_KEY)
+        human_delay(DELAY_AFTER_LOOT)
 
     print(f"\n[BOT] Stopped. Casts: {cast_count}, Fish caught: {fish_count}")
 
