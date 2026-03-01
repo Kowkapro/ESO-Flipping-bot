@@ -6,7 +6,7 @@ Reads fishing node coordinates from:
   2. HarvestMap SavedVariables (personal discovered data)
 
 Data formats:
-  - Community (binary): 8 bytes per node (2B x, 2B y, 2B z, 2B day), coords * 0.2
+  - Community (binary): 8 bytes per node (2B x, 2B y, 2B z, 2B day), coords * 20
   - Personal (CSV): "worldX,worldY,worldZ,timestamp,version,0.0,0.0,flags"
   - Fishing pinTypeId = 8
 """
@@ -56,7 +56,8 @@ def parse_community_binary(binary_data):
     """Parse binary community data (8 bytes per node).
 
     Each node: 2B worldX, 2B worldY, 2B worldZ, 2B discoveryDay
-    Coordinates stored as big-endian uint16, multiply by 0.2.
+    Coordinates stored as big-endian uint16, multiply by 20 (0.2 * 100)
+    to convert to raw world coordinates (matching GetUnitRawWorldPosition).
     """
     nodes = []
     if len(binary_data) % 8 != 0:
@@ -64,9 +65,9 @@ def parse_community_binary(binary_data):
 
     for i in range(0, len(binary_data), 8):
         x1, x2, y1, y2, z1, z2, d1, d2 = binary_data[i : i + 8]
-        world_x = (x1 * 256 + x2) * 0.2
-        world_y = (y1 * 256 + y2) * 0.2
-        world_z = (z1 * 256 + z2) * 0.2
+        world_x = (x1 * 256 + x2) * 20
+        world_y = (y1 * 256 + y2) * 20
+        world_z = (z1 * 256 + z2) * 20
         nodes.append({"x": world_x, "y": world_y, "z": world_z})
 
     return nodes
@@ -81,9 +82,9 @@ def parse_personal_node(csv_string):
     if len(parts) < 3:
         return None
 
-    world_x = float(parts[0])
-    world_y = float(parts[1])
-    world_z = float(parts[2])
+    world_x = float(parts[0]) * 100
+    world_y = float(parts[1]) * 100
+    world_z = float(parts[2]) * 100
     flags = int(float(parts[7])) if len(parts) > 7 else 0
 
     if flags & DELETE_FLAG:
@@ -237,7 +238,7 @@ def parse_savedvars_file(filepath, zone_name="glenumbra"):
     return nodes
 
 
-def deduplicate_nodes(nodes, threshold=5.0):
+def deduplicate_nodes(nodes, threshold=500.0):
     """Remove duplicate nodes within threshold distance of each other."""
     unique = []
     for node in nodes:
@@ -289,7 +290,7 @@ def get_fishing_holes(zone_name="glenumbra"):
         return []
 
     # Deduplicate
-    unique = deduplicate_nodes(all_nodes, threshold=5.0)
+    unique = deduplicate_nodes(all_nodes, threshold=500.0)
     print(f"Total unique fishing holes: {len(unique)}")
     return unique
 
