@@ -2,9 +2,9 @@
 Navigation module for ESO Fishing Bot.
 
 Handles movement between waypoints using:
-- FishingNav Lua addon for player position/heading
+- FishingNav Lua addon for player position/heading (via SavedVariables)
 - pydirectinput for WASD movement and mouse rotation
-- Combat detection and sprint escape
+- "Blind navigation" via /reloadui for Phase 3 dynamic mode
 
 Coordinate system:
   ESO uses GetUnitRawWorldPosition which returns worldX, worldZ, worldY
@@ -12,6 +12,7 @@ Coordinate system:
   Heading from GetMapPlayerPosition is in radians, 0 = North, increases clockwise
 """
 
+import ctypes
 import json
 import math
 import os
@@ -21,8 +22,14 @@ import time
 
 import pydirectinput
 
-# ─── Settings ──────────────────────────────────────────────────────
-ARRIVAL_THRESHOLD = 5.0        # Distance (world units) to consider "arrived" at waypoint
+# ─── Paths ────────────────────────────────────────────────────────
+SAVED_VARS_DIR = os.path.join(
+    "d:", os.sep, "Documents", "Elder Scrolls Online", "live", "SavedVariables"
+)
+FISHINGNAV_FILE = os.path.join(SAVED_VARS_DIR, "FishingNav.lua")
+
+# ─── Movement settings ───────────────────────────────────────────
+ARRIVAL_THRESHOLD = 15.0       # Distance (world units) to consider "arrived"
 POSITION_READ_INTERVAL = 0.2   # How often to read position while moving (seconds)
 STUCK_TIMEOUT = 10.0           # Seconds without movement before declaring stuck
 STUCK_DISTANCE = 2.0           # Min distance to move in STUCK_TIMEOUT to not be stuck
@@ -30,23 +37,26 @@ SPRINT_ESCAPE_DURATION = 5.0   # Seconds to sprint when fleeing from combat
 COMBAT_CHECK_INTERVAL = 1.0    # How often to check combat state while moving
 
 # Mouse sensitivity for rotation (pixels per radian)
-# This needs calibration — depends on ESO mouse sensitivity settings
+# Needs calibration — depends on ESO mouse sensitivity settings
 MOUSE_SENSITIVITY = 400.0
+
+# Blind navigation constants (Phase 3)
+SPRINT_SPEED = 550.0           # World units per second while sprinting (needs calibration)
+WALK_SPEED = 250.0             # World units per second while walking
+MAX_BLIND_MOVE_SEC = 10.0      # Max duration for a single blind movement segment
+RELOADUI_WAIT = 8.0            # Seconds to wait after /reloadui for game to reload
 
 # Movement keys
 KEY_FORWARD = 'w'
 KEY_SPRINT = 'shift'
 
-SAVED_VARS_DIR = os.path.join(
-    "d:", os.sep, "Documents", "Elder Scrolls Online", "live", "SavedVariables"
-)
-FISHINGNAV_FILE = os.path.join(SAVED_VARS_DIR, "FishingNav_Data.lua")
 
+# ─── Position reading (SavedVariables) ───────────────────────────
 
 def read_player_position():
     """Read current player position from FishingNav SavedVariables.
 
-    Returns dict with worldX, worldY, worldZ, heading, inCombat
+    Returns dict with worldX, worldY, worldZ, heading, zoneName, inCombat
     or None if unavailable.
     """
     if not os.path.exists(FISHINGNAV_FILE):
@@ -64,17 +74,68 @@ def read_player_position():
         if match:
             data[key] = float(match.group(1))
 
+    for key in ["zoneName", "mapName"]:
+        match = re.search(rf'\["{key}"\]\s*=\s*"([^"]*)"', content)
+        if match:
+            data[key] = match.group(1)
+
     match = re.search(r'\["inCombat"\]\s*=\s*(true|false)', content)
     if match:
         data["inCombat"] = match.group(1) == "true"
-    else:
-        data["inCombat"] = False
 
     if "worldX" not in data:
         return None
 
     return data
 
+
+def get_file_mtime():
+    """Get modification timestamp of FishingNav SavedVariables file."""
+    try:
+        return os.path.getmtime(FISHINGNAV_FILE)
+    except OSError:
+        return 0
+
+
+def force_reloadui_and_read(timeout=15.0):
+    """Send /reloadui to ESO and wait for SavedVariables to update.
+
+    This forces ESO to flush all SavedVariables to disk, giving us
+    fresh player coordinates. Takes ~5-8 seconds.
+
+    Returns updated position dict or None on timeout.
+    """
+    mtime_before = get_file_mtime()
+
+    # Switch to English keyboard layout before typing
+    EN_US = 0x0409
+    ctypes.windll.user32.PostMessageW(
+        ctypes.windll.user32.GetForegroundWindow(),
+        0x0050,  # WM_INPUTLANGCHANGEREQUEST
+        0,
+        EN_US,
+    )
+    time.sleep(0.15)
+
+    # Type /reloadui in ESO chat
+    pydirectinput.press('enter')
+    time.sleep(0.2)
+    pydirectinput.typewrite('/reloadui', interval=0.03)
+    time.sleep(0.1)
+    pydirectinput.press('enter')
+
+    # Wait for file to update (reloadui saves then reloads UI)
+    start = time.time()
+    while time.time() - start < timeout:
+        time.sleep(0.5)
+        if get_file_mtime() > mtime_before:
+            time.sleep(0.3)  # Extra wait for write to complete
+            return read_player_position()
+
+    return None
+
+
+# ─── Geometry helpers ─────────────────────────────────────────────
 
 def calculate_angle(current_x, current_y, target_x, target_y):
     """Calculate angle from current position to target (radians, 0=North, CW).
@@ -97,7 +158,6 @@ def angle_difference(current, target):
     Positive = turn right, Negative = turn left.
     """
     diff = target - current
-    # Normalize to [-pi, pi]
     while diff > math.pi:
         diff -= 2 * math.pi
     while diff < -math.pi:
@@ -110,6 +170,8 @@ def distance_2d(x1, y1, x2, y2):
     return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
 
+# ─── Camera / movement ───────────────────────────────────────────
+
 def rotate_camera(angle_diff):
     """Rotate the camera by angle_diff radians using mouse movement.
 
@@ -119,8 +181,6 @@ def rotate_camera(angle_diff):
     if abs(pixels) < 1:
         return
 
-    # Move mouse horizontally to rotate camera
-    # pydirectinput.moveRel moves the mouse relative to current position
     pydirectinput.moveRel(pixels, 0)
     time.sleep(0.1)
 
@@ -132,9 +192,68 @@ def press_key_hold(key, duration):
     pydirectinput.keyUp(key)
 
 
+def move_blind_segment(target_x, target_y, current_pos, sprint=True):
+    """Rotate toward target and sprint/walk blind for calculated duration.
+
+    This is used for Phase 3 "blind navigation" where we can't read
+    position in real-time. We calculate bearing and distance, then
+    move for distance/speed seconds.
+
+    Args:
+        target_x, target_y: Target world coordinates
+        current_pos: Dict with worldX, worldY, heading
+        sprint: Whether to sprint (True) or walk (False)
+
+    Returns:
+        Estimated duration of movement in seconds
+    """
+    cx = current_pos["worldX"]
+    cy = current_pos["worldY"]
+    heading = current_pos.get("heading", 0)
+
+    dist = distance_2d(cx, cy, target_x, target_y)
+    if dist < ARRIVAL_THRESHOLD:
+        return 0.0
+
+    # Rotate toward target
+    target_angle = calculate_angle(cx, cy, target_x, target_y)
+    turn = angle_difference(heading, target_angle)
+    if abs(turn) > 0.05:
+        rotate_camera(turn)
+        time.sleep(0.15)
+
+    # Calculate move duration
+    speed = SPRINT_SPEED if sprint else WALK_SPEED
+    duration = dist / speed
+    duration = min(duration, MAX_BLIND_MOVE_SEC)
+    # Add slight randomness for human-like behavior
+    duration += random.uniform(-0.1, 0.2)
+    duration = max(0.3, duration)
+
+    # Move forward (sprint if requested)
+    if sprint:
+        pydirectinput.keyDown(KEY_SPRINT)
+        time.sleep(0.05)
+
+    pydirectinput.keyDown(KEY_FORWARD)
+    time.sleep(duration)
+    pydirectinput.keyUp(KEY_FORWARD)
+
+    if sprint:
+        pydirectinput.keyUp(KEY_SPRINT)
+
+    time.sleep(0.1)
+    return duration
+
+
+# ─── Route-based navigation (Phase 2 — kept for compatibility) ───
+
 def move_to_waypoint(target_x, target_y, check_running, on_combat=None,
                      on_stuck=None):
-    """Navigate to a target position.
+    """Navigate to a target position using real-time position reading.
+
+    Note: This relies on FishingNav addon updating position in real-time
+    via SavedVariables. For Phase 3, use move_blind_segment() instead.
 
     Args:
         target_x, target_y: Target world coordinates

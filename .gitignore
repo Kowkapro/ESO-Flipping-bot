@@ -5,6 +5,9 @@
 # ESO data (contains account info)
 SavedVariables/
 
+# HarvestMap community data (large binary files)
+fishing/harvestmap_data/
+
 # Python
 __pycache__/
 *.pyc

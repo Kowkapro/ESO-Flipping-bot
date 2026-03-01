@@ -10,66 +10,31 @@ Controls:
   F9  - Save route and exit
   F10 - Discard and exit
 
+How it works:
+  On F7/F8 press, the script sends /script ReloadUI() to ESO chat,
+  which forces SavedVariables to flush to disk with fresh coordinates.
+  Takes ~5 seconds per waypoint.
+
 Requires: FishingNav Lua addon running in ESO to provide coordinates.
 """
 
-import ctypes
 import json
 import math
 import os
 import re
 import sys
 import time
+import threading
 
-SAVED_VARS_DIR = os.path.join(
-    "d:", os.sep, "Documents", "Elder Scrolls Online", "live", "SavedVariables"
+import keyboard
+
+from navigation import (
+    read_player_position,
+    force_reloadui_and_read as force_save_and_read,
+    FISHINGNAV_FILE,
 )
-FISHINGNAV_FILE = os.path.join(SAVED_VARS_DIR, "FishingNav_Data.lua")
+
 ROUTES_DIR = os.path.join(os.path.dirname(__file__), "routes")
-
-
-def read_player_position():
-    """Read current player position from FishingNav SavedVariables.
-
-    Returns dict with x, y, z, heading, zoneName, mapName, inCombat
-    or None if data unavailable.
-    """
-    if not os.path.exists(FISHINGNAV_FILE):
-        return None
-
-    try:
-        with open(FISHINGNAV_FILE, "r", encoding="utf-8") as f:
-            content = f.read()
-    except Exception:
-        return None
-
-    data = {}
-    # Parse key-value pairs from Lua SavedVariables
-    for key in ["worldX", "worldY", "worldZ", "heading", "timestamp"]:
-        match = re.search(rf'\["{key}"\]\s*=\s*(-?\d+\.?\d*)', content)
-        if match:
-            data[key] = float(match.group(1))
-
-    for key in ["zoneName", "mapName"]:
-        match = re.search(rf'\["{key}"\]\s*=\s*"([^"]*)"', content)
-        if match:
-            data[key] = match.group(1)
-
-    match = re.search(r'\["inCombat"\]\s*=\s*(true|false)', content)
-    if match:
-        data["inCombat"] = match.group(1) == "true"
-
-    if "worldX" not in data:
-        return None
-
-    return data
-
-
-def distance_2d(p1, p2):
-    """Calculate 2D distance between two points."""
-    dx = p1["worldX"] - p2["worldX"]
-    dy = p1["worldY"] - p2["worldY"]
-    return math.sqrt(dx * dx + dy * dy)
 
 
 def main():
@@ -82,11 +47,11 @@ def main():
     print("  F9  - Save route and exit")
     print("  F10 - Discard and exit")
     print()
-    print("  Walk between fishing holes, pressing F7 at each one.")
-    print("  Use F8 for corners/turns where bot needs to change direction.")
+    print("  NOTE: Each F7/F8 will trigger /reloadui in ESO (~5 sec)")
+    print("  Make sure ESO is focused when you press F7/F8!")
     print("=" * 50)
 
-    # Check FishingNav data is available
+    # Check FishingNav data
     print("\n[REC] Checking FishingNav addon data...")
     pos = read_player_position()
     if not pos:
@@ -101,78 +66,84 @@ def main():
     zone = pos.get("zoneName", "unknown")
     map_name = pos.get("mapName", "unknown")
     print(f"[REC] Connected! Zone: {zone}, Map: {map_name}")
-    print(f"[REC] Position: x={pos['worldX']:.1f}, y={pos['worldY']:.1f}")
-    print(f"\n[REC] Ready. Start walking and press F7 at fishing holes.\n")
+    print(f"[REC] Position: x={pos['worldX']:.0f}, y={pos['worldY']:.0f}")
+    print(f"\n[REC] Ready. Go to a fishing hole and press F7.\n")
 
     waypoints = []
+    done = False
+    busy = False  # Prevent concurrent reloadui calls
 
-    # Windows virtual key codes
-    VK_F7 = 0x76
-    VK_F8 = 0x77
-    VK_F9 = 0x78
-    VK_F10 = 0x79
+    def record_waypoint(wp_type):
+        nonlocal busy
+        if busy:
+            return
+        busy = True
 
-    last_press_time = 0
+        print(f"  [..] Saving position ({wp_type})... /reloadui sent")
+        pos = force_save_and_read()
+        if pos:
+            wp = {
+                "x": pos["worldX"],
+                "y": pos["worldY"],
+                "z": pos["worldZ"],
+                "heading": pos.get("heading", 0),
+                "type": wp_type,
+            }
+            waypoints.append(wp)
+            label = "FISHING" if wp_type == "fishing" else "WALK"
+            print(
+                f"  [#{len(waypoints)}] {label} at "
+                f"x={wp['x']:.0f}, y={wp['y']:.0f}"
+            )
+        else:
+            print("  [!] Timeout waiting for position update")
 
-    while True:
-        now = time.time()
+        busy = False
 
-        # Debounce (300ms)
-        if now - last_press_time < 0.3:
-            time.sleep(0.05)
-            continue
+    def on_f7():
+        threading.Thread(target=record_waypoint, args=("fishing",), daemon=True).start()
 
-        if ctypes.windll.user32.GetAsyncKeyState(VK_F7) & 0x8000:
-            pos = read_player_position()
-            if pos:
-                wp = {
-                    "x": pos["worldX"],
-                    "y": pos["worldY"],
-                    "z": pos["worldZ"],
-                    "heading": pos.get("heading", 0),
-                    "type": "fishing",
-                }
-                waypoints.append(wp)
-                print(
-                    f"  [#{len(waypoints)}] FISHING at "
-                    f"x={wp['x']:.1f}, y={wp['y']:.1f}"
-                )
-            last_press_time = now
+    def on_f8():
+        threading.Thread(target=record_waypoint, args=("walk",), daemon=True).start()
 
-        elif ctypes.windll.user32.GetAsyncKeyState(VK_F8) & 0x8000:
-            pos = read_player_position()
-            if pos:
-                wp = {
-                    "x": pos["worldX"],
-                    "y": pos["worldY"],
-                    "z": pos["worldZ"],
-                    "heading": pos.get("heading", 0),
-                    "type": "walk",
-                }
-                waypoints.append(wp)
-                print(
-                    f"  [#{len(waypoints)}] WALK at "
-                    f"x={wp['x']:.1f}, y={wp['y']:.1f}"
-                )
-            last_press_time = now
+    def on_f9():
+        nonlocal done
+        done = True
 
-        elif ctypes.windll.user32.GetAsyncKeyState(VK_F9) & 0x8000:
-            if not waypoints:
-                print("\n[REC] No waypoints recorded! Nothing to save.")
-            else:
-                save_route(waypoints, zone)
-            break
+    def on_f10():
+        nonlocal done
+        waypoints.clear()
+        done = True
 
-        elif ctypes.windll.user32.GetAsyncKeyState(VK_F10) & 0x8000:
-            print("\n[REC] Discarded. No route saved.")
-            break
+    keyboard.on_press_key("f7", lambda _: on_f7(), suppress=False)
+    keyboard.on_press_key("f8", lambda _: on_f8(), suppress=False)
+    keyboard.on_press_key("f9", lambda _: on_f9(), suppress=False)
+    keyboard.on_press_key("f10", lambda _: on_f10(), suppress=False)
 
-        time.sleep(0.05)
+    while not done:
+        time.sleep(0.1)
+
+    keyboard.unhook_all()
+
+    if waypoints:
+        save_route(waypoints, zone)
+    else:
+        print("\n[REC] No waypoints recorded. Nothing saved.")
 
 
 def save_route(waypoints, zone):
     """Save recorded route to a JSON file."""
-    zone_clean = zone.lower().replace(" ", "_")
+    zone_clean = re.sub(r'\^[FMNfmn]', '', zone)
+    zone_clean = zone_clean.strip().lower().replace(" ", "_")
+    _translit = {
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e',
+        'ё': 'yo', 'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k',
+        'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r',
+        'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'kh', 'ц': 'ts',
+        'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '', 'ы': 'y', 'ь': '',
+        'э': 'e', 'ю': 'yu', 'я': 'ya',
+    }
+    zone_clean = ''.join(_translit.get(c, c) for c in zone_clean)
     fishing_count = sum(1 for wp in waypoints if wp["type"] == "fishing")
 
     route = {
@@ -182,7 +153,8 @@ def save_route(waypoints, zone):
         "waypoints": waypoints,
     }
 
-    # Generate filename
+    os.makedirs(ROUTES_DIR, exist_ok=True)
+
     existing = [f for f in os.listdir(ROUTES_DIR) if f.startswith(zone_clean)]
     index = len(existing) + 1
     filename = f"{zone_clean}_route_{index}.json"
@@ -195,11 +167,10 @@ def save_route(waypoints, zone):
     print(f"  Waypoints: {len(waypoints)} ({fishing_count} fishing, "
           f"{len(waypoints) - fishing_count} walk)")
 
-    # Show route summary
     print(f"\n  Route preview:")
     for i, wp in enumerate(waypoints):
-        marker = "🎣" if wp["type"] == "fishing" else "🚶"
-        print(f"    {marker} #{i+1}: x={wp['x']:.1f}, y={wp['y']:.1f}")
+        marker = "[FISH]" if wp["type"] == "fishing" else "[WALK]"
+        print(f"    {marker} #{i+1}: x={wp['x']:.0f}, y={wp['y']:.0f}")
         if i > 0:
             prev = waypoints[i - 1]
             dist = math.sqrt(

@@ -5,7 +5,6 @@ Requires Votan's Fisherman addon (shows white hook icon on bite)
 
 Phase 1: Single hole fishing (default)
 Phase 2: Route navigation between multiple fishing holes
-Phase 3: Dynamic navigation using HarvestMap spawn point data
   Requires FishingNav Lua addon for player coordinates
 
 Controls:
@@ -13,9 +12,8 @@ Controls:
   F6  - Stop bot completely
 
 Usage:
-  python fishing_bot.py                              # Phase 1: single hole
-  python fishing_bot.py routes/my_route.json         # Phase 2: navigate route
-  python fishing_bot.py --dynamic glenumbra          # Phase 3: dynamic navigation
+  python fishing_bot.py                         # Phase 1: single hole
+  python fishing_bot.py routes/my_route.json    # Phase 2: navigate route
 """
 
 import argparse
@@ -289,61 +287,6 @@ def fishing_loop():
     print(f"\n[BOT] Stopped. Casts: {cast_count}, Fish caught: {fish_count}")
 
 
-def fishing_dynamic_loop(zone_name):
-    """Phase 3: Dynamic navigation using HarvestMap data."""
-    global running, paused, fish_count, cast_count
-
-    from dynamic_navigator import DynamicNavigator
-
-    navigator = DynamicNavigator(zone_name)
-    if not navigator.spawn_points:
-        print(f"[ERROR] No spawn points for zone '{zone_name}'!")
-        return
-
-    print(f"\n[BOT] Starting dynamic mode: {zone_name}")
-    print(f"[BOT] Spawn points: {len(navigator.spawn_points)}")
-    send_telegram(
-        f"🎣 Fishing bot started (dynamic mode)\n"
-        f"Zone: {zone_name}\n"
-        f"Spawn points: {len(navigator.spawn_points)}"
-    )
-
-    def check_running():
-        return running and not paused
-
-    def on_hole_done(hole_idx, result):
-        send_telegram(
-            f"🐟 Hole #{hole_idx} {result} "
-            f"(fish: {fish_count}, casts: {cast_count})"
-        )
-
-    while running:
-        if paused:
-            time.sleep(0.5)
-            continue
-
-        stats = navigator.run_circuit(check_running, fish_one_hole, on_hole_done)
-
-        if running and not paused:
-            msg = (
-                f"🔄 Circuit #{stats['circuit']} done\n"
-                f"Visited: {stats['visited']}/{stats['total']}\n"
-                f"Fished: {stats['fished']}, Empty: {stats['empty']}\n"
-                f"Total fish: {fish_count}"
-            )
-            send_telegram(msg)
-            print(f"\n[BOT] Waiting before next circuit...")
-            time.sleep(random.uniform(5.0, 10.0))
-
-    send_telegram(
-        f"⏹ Bot stopped (dynamic).\n"
-        f"Circuits: {navigator.circuit_count}, "
-        f"Fish: {fish_count}, Casts: {cast_count}"
-    )
-    print(f"\n[BOT] Stopped. Circuits: {navigator.circuit_count}, "
-          f"Casts: {cast_count}, Fish: {fish_count}")
-
-
 def fishing_route_loop(route_file):
     """Phase 2: Navigate between fishing holes using a recorded route."""
     global running, paused, fish_count, cast_count
@@ -482,21 +425,13 @@ def main():
         "route", nargs="?", default=None,
         help="Path to route JSON file for Phase 2 (navigation mode)"
     )
-    parser.add_argument(
-        "--dynamic", "-d", metavar="ZONE",
-        help="Phase 3: dynamic navigation using HarvestMap data (e.g. glenumbra)"
-    )
     args = parser.parse_args()
 
     route_mode = args.route is not None
-    dynamic_mode = args.dynamic is not None
 
     print("=" * 50)
     print("  ESO Fishing Bot")
-    if dynamic_mode:
-        print(f"  Mode: DYNAMIC NAVIGATION")
-        print(f"  Zone: {args.dynamic}")
-    elif route_mode:
+    if route_mode:
         print(f"  Mode: ROUTE NAVIGATION")
         print(f"  Route: {args.route}")
     else:
@@ -506,9 +441,7 @@ def main():
     print("  F5 - Start / Pause")
     print("  F6 - Stop")
     print()
-    if dynamic_mode:
-        print("  Bot will visit all HarvestMap spawn points dynamically.")
-    elif route_mode:
+    if route_mode:
         print("  Bot will navigate between fishing holes automatically.")
     else:
         print("  Stand in front of a fishing hole and press F5")
@@ -534,9 +467,7 @@ def main():
 
     # Run appropriate loop
     try:
-        if dynamic_mode:
-            fishing_dynamic_loop(args.dynamic)
-        elif route_mode:
+        if route_mode:
             fishing_route_loop(args.route)
         else:
             fishing_loop()
