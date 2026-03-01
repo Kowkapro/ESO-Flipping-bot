@@ -14,6 +14,13 @@ import sys
 import ctypes
 import threading
 
+import os
+import requests
+from dotenv import load_dotenv
+
+# Load .env from project root
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
 import cv2
 import numpy as np
 import pyautogui
@@ -43,12 +50,18 @@ DELAY_RECAST = (0.3, 0.8)           # Delay before re-casting
 
 MAX_WAIT_FOR_HOOK = 45.0     # Max seconds to wait for hook (bite timeout)
 MAX_WAIT_FOR_LOOT = 10.0     # Max seconds to wait for loot window
+MAX_FAILED_CASTS = 2         # Failed casts in a row before hole is considered depleted
+
+# ─── Telegram ───────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # ─── State ──────────────────────────────────────────────────────────
 running = False
 paused = False
 fish_count = 0
 cast_count = 0
+failed_casts = 0
 
 
 def get_screen_regions():
@@ -116,6 +129,21 @@ def detect_loot_window():
     return ratio > LOOT_DARK_RATIO
 
 
+def send_telegram(message):
+    """Send a notification to Telegram."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print(f"[TG] No Telegram config, skipping: {message}")
+        return
+
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+        requests.post(url, data=data, timeout=10)
+        print(f"[TG] Sent: {message}")
+    except Exception as e:
+        print(f"[TG] Failed to send: {e}")
+
+
 def human_delay(delay_range):
     """Sleep for a random duration within range (human-like)."""
     delay = random.uniform(*delay_range)
@@ -164,10 +192,11 @@ def wait_for_loot():
 
 def fishing_loop():
     """Main fishing cycle."""
-    global running, fish_count, cast_count
+    global running, paused, fish_count, cast_count, failed_casts
 
     print("\n[BOT] Starting fishing loop...")
     print("[BOT] Make sure you are facing a fishing hole!\n")
+    send_telegram(f"🎣 Fishing bot started!")
 
     while running:
         if paused:
@@ -185,9 +214,28 @@ def fishing_loop():
         if not wait_for_hook():
             if not running:
                 break
-            print(f"[{cast_count}] No bite, retrying...")
-            human_delay(DELAY_RECAST)
+
+            failed_casts += 1
+            print(f"[{cast_count}] No bite (failed: {failed_casts}/{MAX_FAILED_CASTS})")
+
+            if failed_casts >= MAX_FAILED_CASTS:
+                # Hole is depleted — notify and pause
+                msg = (
+                    f"🔴 Лунка иссякла!\n"
+                    f"Поймано рыб: {fish_count}\n"
+                    f"Забросов: {cast_count}\n"
+                    f"Перемести персонажа и нажми F5"
+                )
+                print(f"\n[BOT] HOLE DEPLETED! Fish caught: {fish_count}")
+                send_telegram(msg)
+                paused = True
+                failed_casts = 0
+            else:
+                human_delay(DELAY_RECAST)
             continue
+
+        # Reset failed cast counter on successful bite
+        failed_casts = 0
 
         # Step 3: Reel in (press E)
         human_delay(DELAY_REEL_REACTION)
@@ -203,10 +251,10 @@ def fishing_loop():
         print(f"[{cast_count}] Fish #{fish_count}! Pressing R to loot...")
         press_key(LOOT_KEY)
         time.sleep(0.3)
-        # Press R again in case first one didn't register
         press_key(LOOT_KEY)
         human_delay(DELAY_AFTER_LOOT)
 
+    send_telegram(f"⏹ Bot stopped. Fish: {fish_count}, Casts: {cast_count}")
     print(f"\n[BOT] Stopped. Casts: {cast_count}, Fish caught: {fish_count}")
 
 
