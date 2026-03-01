@@ -13,6 +13,7 @@ Coordinate system:
 """
 
 import ctypes
+import ctypes.wintypes
 import json
 import math
 import os
@@ -21,6 +22,43 @@ import re
 import time
 
 import pydirectinput
+
+
+# ─── Win32 SendInput for mouse (ESO ignores pydirectinput mouse moves) ───
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.wintypes.LONG),
+        ("dy", ctypes.wintypes.LONG),
+        ("mouseData", ctypes.wintypes.DWORD),
+        ("dwFlags", ctypes.wintypes.DWORD),
+        ("time", ctypes.wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+class INPUT(ctypes.Structure):
+    class _INPUT(ctypes.Union):
+        _fields_ = [("mi", MOUSEINPUT)]
+    _anonymous_ = ("_input",)
+    _fields_ = [
+        ("type", ctypes.wintypes.DWORD),
+        ("_input", _INPUT),
+    ]
+
+INPUT_MOUSE = 0
+MOUSEEVENTF_MOVE = 0x0001
+
+def _send_mouse_move(dx, dy):
+    """Send raw mouse move via Win32 SendInput (works with ESO raw input)."""
+    inp = INPUT()
+    inp.type = INPUT_MOUSE
+    inp.mi.dx = dx
+    inp.mi.dy = dy
+    inp.mi.mouseData = 0
+    inp.mi.dwFlags = MOUSEEVENTF_MOVE
+    inp.mi.time = 0
+    inp.mi.dwExtraInfo = ctypes.pointer(ctypes.c_ulong(0))
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
 
 # ─── Paths ────────────────────────────────────────────────────────
 SAVED_VARS_DIR = os.path.join(
@@ -38,10 +76,10 @@ COMBAT_CHECK_INTERVAL = 1.0    # How often to check combat state while moving
 
 # Mouse sensitivity for rotation (pixels per radian)
 # Needs calibration — depends on ESO mouse sensitivity settings
-MOUSE_SENSITIVITY = 400.0
+MOUSE_SENSITIVITY = 685.5  # Calibrated 2026-03-02
 
 # Blind navigation constants (Phase 3)
-SPRINT_SPEED = 550.0           # World units per second while sprinting (needs calibration)
+SPRINT_SPEED = 968.6           # Calibrated 2026-03-02
 WALK_SPEED = 250.0             # World units per second while walking
 MAX_BLIND_MOVE_SEC = 10.0      # Max duration for a single blind movement segment
 RELOADUI_WAIT = 8.0            # Seconds to wait after /reloadui for game to reload
@@ -176,12 +214,26 @@ def rotate_camera(angle_diff):
     """Rotate the camera by angle_diff radians using mouse movement.
 
     Positive = turn right, Negative = turn left.
+    Uses Win32 SendInput — ESO ignores pydirectinput mouse moves.
+    Moves in small steps for reliability.
     """
-    pixels = int(angle_diff * MOUSE_SENSITIVITY)
-    if abs(pixels) < 1:
+    total_pixels = int(angle_diff * MOUSE_SENSITIVITY)
+    if abs(total_pixels) < 1:
         return
 
-    pydirectinput.moveRel(pixels, 0)
+    # Move in small steps (ESO may ignore large single moves)
+    step_size = 50
+    steps = abs(total_pixels) // step_size
+    remainder = abs(total_pixels) % step_size
+    direction = 1 if total_pixels > 0 else -1
+
+    for _ in range(steps):
+        _send_mouse_move(direction * step_size, 0)
+        time.sleep(0.01)
+
+    if remainder > 0:
+        _send_mouse_move(direction * remainder, 0)
+
     time.sleep(0.1)
 
 
