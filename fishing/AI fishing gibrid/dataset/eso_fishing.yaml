@@ -1,0 +1,9 @@
+path: d:/Claude Code/Projects/ESO/ESO-Flipping-bot/fishing/AI fishing gibrid/dataset
+train: train/images
+val: val/images
+
+names:
+  0: blue_hook
+  1: bubbles
+  2: waypoint_marker
+  3: enemy

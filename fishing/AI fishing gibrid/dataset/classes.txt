@@ -1,0 +1,4 @@
+blue_hook
+bubbles
+waypoint_marker
+enemy

@@ -22,6 +22,14 @@ node_modules/
 .vscode/
 .idea/
 
+# YOLO / ML (large files)
+fishing/AI fishing gibrid/dataset/images/
+fishing/AI fishing gibrid/dataset/train/
+fishing/AI fishing gibrid/dataset/val/
+fishing/AI fishing gibrid/dataset/*.cache
+fishing/AI fishing gibrid/runs/
+*.pt
+
 # Media (large files)
 *.mp4
 *.avi
