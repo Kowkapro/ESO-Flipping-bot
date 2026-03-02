@@ -628,23 +628,41 @@ def main():
 
     if arrival in ("arrived", "interaction"):
         # Small pause to settle after running
-        time.sleep(random.uniform(0.5, 1.0))
+        time.sleep(random.uniform(0.3, 0.5))
 
-        # Verify we see interaction_prompt via YOLO before fishing
-        detections = yolo_detect(model, sct, monitor)
-        has_interaction = has_interaction_prompt(detections)
-        print(f"[CHECK] interaction_prompt visible: {has_interaction}")
-
-        if not has_interaction:
-            # Walk forward a bit and recheck (might be just out of range)
-            print("[CHECK] No prompt yet — walking forward a bit...")
-            pydirectinput.keyDown('w')
-            time.sleep(random.uniform(1.0, 2.0))
-            pydirectinput.keyUp('w')
-            time.sleep(0.3)
+        if arrival == "interaction":
+            # Phase C confirmed interaction_prompt — go straight to fishing.
+            # No movement allowed from here — Phase D controls everything.
+            print("[CHECK] Phase C confirmed interaction_prompt — starting fishing!")
+            has_interaction = True
+        else:
+            # Arrived by marker loss — need to verify we're at a fishing hole
             detections = yolo_detect(model, sct, monitor)
             has_interaction = has_interaction_prompt(detections)
-            print(f"[CHECK] Recheck: {has_interaction}")
+            print(f"[CHECK] interaction_prompt visible: {has_interaction}")
+
+            if not has_interaction:
+                # Step backward (might have overshot)
+                print("[CHECK] No prompt — stepping backward...")
+                pydirectinput.keyDown('s')
+                time.sleep(random.uniform(0.8, 1.5))
+                pydirectinput.keyUp('s')
+                time.sleep(0.3)
+                detections = yolo_detect(model, sct, monitor)
+                has_interaction = has_interaction_prompt(detections)
+                print(f"[CHECK] Recheck after backstep: {has_interaction}")
+
+            if not has_interaction:
+                # Try looking around to find the hole
+                print("[CHECK] Still no prompt — looking around...")
+                for turn_dir in [1, -1, -1, 1]:
+                    human_mouse_arc(turn_dir * random.randint(400, 800))
+                    time.sleep(0.3)
+                    detections = yolo_detect(model, sct, monitor)
+                    if has_interaction_prompt(detections):
+                        has_interaction = True
+                        print("[CHECK] Found prompt after turning!")
+                        break
 
         if has_interaction:
             # ── Phase D: FISH! ──
@@ -657,7 +675,7 @@ def main():
             print(f"  Casts made: {casts_made}")
             print("=" * 60)
         else:
-            print("[CHECK] No interaction_prompt after walking up.")
+            print("[CHECK] No interaction_prompt found nearby.")
             print("[CHECK] Might not be at the right spot.")
     else:
         print(f"[RESULT] Did not arrive at fishing hole (reason: {arrival})")
