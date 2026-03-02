@@ -1,9 +1,27 @@
-# Phase 3: Dynamic Fishing Bot Navigation
+# Phase 3: Dynamic Fishing Bot Navigation ⏸️ ЗАМОРОЖЕНА
+
+> **Статус:** Реализована и протестирована, но заморожена в пользу Phase 4 (YOLO AI).
+> Код сохранён и может быть использован как fallback если Phase 4 не оправдает ожиданий.
 
 ## Why
 Fishing holes in ESO spawn randomly from ~496 known positions per zone.
 Fixed routes don't work — holes despawn/respawn unpredictably.
 Bot should visit all known spawn points from HarvestMap data dynamically.
+
+## Status: IMPLEMENTED ✅, FROZEN ⏸️
+
+### What was done:
+- [✅] `fishing/navigation.py` — rewritten: SavedVariables reader, `force_reloadui_and_read()`, `move_blind_segment()`
+- [✅] `fishing/dynamic_navigator.py` — `DynamicNavigator` class, visits all ~496 spawn points per zone
+- [✅] `fishing/fishing_bot.py` — added `--dynamic ZONE` CLI flag
+- [✅] `fishing/calibrate.py` — sprint speed + mouse sensitivity calibration tool
+- [✅] Calibration done: `SPRINT_SPEED=968.6`, `MOUSE_SENSITIVITY=685.5`
+- [✅] HarvestMap community data parser working (binary format decoded)
+
+### Why frozen:
+- `/reloadui` takes 5-8 seconds per call — major bottleneck for navigation
+- Phase 4 (YOLO AI) uses visual navigation via map + compass — no `/reloadui` needed
+- Phase 4 is more flexible and "intelligent" (sees the game world)
 
 ## Core Problem: Player Position
 ESO writes SavedVariables to disk only on `/reloadui` (not real-time).
@@ -17,12 +35,13 @@ ESO writes SavedVariables to disk only on `/reloadui` (not real-time).
 
 ## Files
 
-### 1. `fishing/navigation.py` — Fix + add utilities
-- Fix `read_player_position()`: read from SavedVariables (currently broken ChatLog reader)
-- Add `force_reloadui_and_read()`: send `/reloadui`, wait for file update, return position
-- Add `move_blind_segment()`: rotate to target, sprint blind for calculated duration
+### 1. `fishing/navigation.py` — ✅ DONE
+- `read_player_position()`: reads from FishingNav SavedVariables
+- `force_reloadui_and_read()`: sends `/reloadui`, waits for file update, returns position
+- `move_blind_segment()`: rotates to target, sprints blind for calculated duration
+- `_send_mouse_move()`: Win32 SendInput for mouse (pydirectinput.moveRel doesn't work with ESO)
 
-### 2. `fishing/dynamic_navigator.py` — NEW, core logic
+### 2. `fishing/dynamic_navigator.py` — ✅ DONE
 Class `DynamicNavigator`:
 - Loads all 496 spawn points from HarvestMap data
 - `find_nearest_unvisited(x, y)` — nearest unvisited hole
@@ -31,18 +50,20 @@ Class `DynamicNavigator`:
 - `run_circuit()` — main loop: find nearest → navigate → check water type → fish/skip
 - Tracks `visited`, `fished`, `empty` sets per circuit
 
-Constants (need calibration):
-- `ARRIVAL_THRESHOLD = 15.0`
-- `SPRINT_SPEED = 550.0` units/sec
-- `MAX_BLIND_MOVE_SEC = 10.0`
-- `PROBE_CASTS = 2`
-
-### 3. `fishing/fishing_bot.py` — Add dynamic mode
+### 3. `fishing/fishing_bot.py` — ✅ DONE
 - CLI: `python fishing_bot.py --dynamic glenumbra`
-- New `fishing_dynamic_loop(zone_name)` function
 
-### 4. `fishing/route_recorder.py` — Deduplicate
-- Import `force_reloadui_and_read` from `navigation.py`
+### 4. `fishing/calibrate.py` — ✅ DONE
+- Calibrated values: `SPRINT_SPEED=968.6`, `MOUSE_SENSITIVITY=685.5`
+
+## Calibrated Constants
+```python
+SPRINT_SPEED = 968.6        # World units/sec (calibrated 02.03.26)
+MOUSE_SENSITIVITY = 685.5   # Pixels/radian (calibrated 02.03.26)
+ARRIVAL_THRESHOLD = 15.0    # Distance to "arrive"
+MAX_BLIND_MOVE_SEC = 10.0   # Max sprint per segment
+PROBE_CASTS = 2             # Failed casts before skipping
+```
 
 ## Algorithm (one circuit)
 ```
@@ -66,9 +87,14 @@ ESO shows text at screen center when near a fishing hole:
 - "Место для рыбалки на море" — sea → SKIP
 - No text → no hole → SKIP
 
-Implementation: screenshot center screen → Tesseract OCR or template matching.
+Implementation: screenshot center screen → threshold white text → Tesseract OCR (fallback: white pixel ratio).
 
-## Calibration (in-game)
-1. **Sprint speed** — sprint between 2 known points, measure time
-2. **Mouse sensitivity** — rotate 360° in game, count pixels
-3. **Arrival threshold** — start at 15, adjust based on accuracy
+---
+
+## Phase 4: YOLO AI Replacement (ACTIVE) 🟢
+
+Phase 4 replaces Phase 3's blind navigation with visual AI:
+- See `fishing/AI fishing gibrid/` for code
+- Uses YOLOv8s trained on ESO screenshots (4 classes)
+- Navigates via in-game map + compass instead of /reloadui coordinates
+- See plan details in the session where Phase 4 was developed

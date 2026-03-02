@@ -1,13 +1,18 @@
 """
-Screenshot Collector — collect training data for YOLO model.
+Screenshot Collector v2 — collect training data for YOLO model.
 
 Run this while playing ESO. Press hotkeys to save screenshots
-into categorized folders for later annotation.
+into categorized folders for later annotation in CVAT.
 
 Controls:
-  F7 — save screenshot as "map" (map with fishing hooks)
-  F8 — save screenshot as "gameplay" (fishing, combat, navigation)
-  F9 — save screenshot as "compass" (compass bar with waypoint)
+  F1 — save "map" screenshot (map with blue fishing hooks)
+  F2 — save "gameplay" screenshot (fishing holes, bubbles, enemies)
+  F3 — save "compass" screenshot (compass bar with waypoint marker)
+  F4 — save "combat" screenshot (HP bar visible, in combat)
+  F5 — save "interaction" screenshot (fishing prompt "[E] Ловить рыбу")
+  F6 — save "xp" screenshot (XP popup after mob kill)
+  F7 — save "navigation" screenshot (destination text, running to waypoint)
+  F8 — save "general" screenshot (anything else useful)
   F10 — stop
 
 Screenshots are saved to: fishing/AI fishing gibrid/dataset/images/{category}/
@@ -25,7 +30,28 @@ from datetime import datetime
 # ── Settings ─────────────────────────────────────────────────────────
 MONITOR_INDEX = 1
 BASE_DIR = os.path.join(os.path.dirname(__file__), "dataset", "images")
-CATEGORIES = ["map", "gameplay", "compass"]
+CATEGORIES = [
+    "map",          # F1: Map open with blue_hook icons
+    "gameplay",     # F2: World view (bubbles, enemies, fishing holes)
+    "compass",      # F3: Compass with waypoint marker (left/center/right)
+    "combat",       # F4: In combat (HP bar visible, skill bar)
+    "interaction",  # F5: Interaction prompt ("[E] Ловить рыбу")
+    "xp",           # F6: XP popup after mob kill
+    "navigation",   # F7: Running to waypoint (destination text on compass)
+    "general",      # F8: Miscellaneous useful screenshots
+]
+
+# Hotkey mapping: F1-F8 for categories, F10 for stop
+HOTKEYS = {
+    "F1": "map",
+    "F2": "gameplay",
+    "F3": "compass",
+    "F4": "combat",
+    "F5": "interaction",
+    "F6": "xp",
+    "F7": "navigation",
+    "F8": "general",
+}
 
 # ── State ────────────────────────────────────────────────────────────
 running = True
@@ -42,14 +68,12 @@ def ensure_dirs():
         counts[cat] = len([f for f in os.listdir(path) if f.endswith(".png")])
 
 
-def on_map(event):
-    capture_queue.put("map")
+def make_handler(category):
+    """Create a hotkey handler for a given category."""
+    def handler(event):
+        capture_queue.put(category)
+    return handler
 
-def on_gameplay(event):
-    capture_queue.put("gameplay")
-
-def on_compass(event):
-    capture_queue.put("compass")
 
 def on_stop(event):
     global running
@@ -63,20 +87,34 @@ def main():
 
     ensure_dirs()
 
-    print("=" * 50)
-    print("  ESO Screenshot Collector")
-    print("=" * 50)
+    print("=" * 60)
+    print("  ESO Screenshot Collector v2 (8 categories)")
+    print("=" * 60)
     print(f"Save directory: {os.path.abspath(BASE_DIR)}")
     print()
     print("Existing screenshots:")
+    total_existing = 0
     for cat in CATEGORIES:
         print(f"  {cat}: {counts[cat]} images")
+        total_existing += counts[cat]
+    print(f"  TOTAL: {total_existing} images")
     print()
     print("Controls (press while ESO is focused):")
-    print("  F7  — save MAP screenshot (open map with hooks)")
-    print("  F8  — save GAMEPLAY screenshot (fishing/combat/world)")
-    print("  F9  — save COMPASS screenshot (compass with waypoint)")
-    print("  F10 — stop collector")
+    print("  F1  — MAP (blue hooks on map)")
+    print("  F2  — GAMEPLAY (bubbles, enemies, fishing holes)")
+    print("  F3  — COMPASS (waypoint marker left/center/right)")
+    print("  F4  — COMBAT (HP bar, taking damage, fighting)")
+    print("  F5  — INTERACTION (fishing prompt, \"[E] Ловить рыбу\")")
+    print("  F6  — XP (XP popup after mob kill)")
+    print("  F7  — NAVIGATION (destination text, running to waypoint)")
+    print("  F8  — GENERAL (anything else)")
+    print("  F10 — STOP collector")
+    print()
+    print("Tips for good training data:")
+    print("  - Vary time of day, weather, locations")
+    print("  - Compass: capture marker at LEFT, CENTER, RIGHT positions")
+    print("  - Combat: capture HP full, medium, low")
+    print("  - Interaction: capture different water types (river/lake/sea)")
     print()
 
     # Setup screen capture in main thread
@@ -86,9 +124,8 @@ def main():
     print("Waiting for hotkeys...\n")
 
     # Register hotkeys
-    keyboard.on_press_key("F7", on_map, suppress=False)
-    keyboard.on_press_key("F8", on_gameplay, suppress=False)
-    keyboard.on_press_key("F9", on_compass, suppress=False)
+    for key, category in HOTKEYS.items():
+        keyboard.on_press_key(key, make_handler(category), suppress=False)
     keyboard.on_press_key("F10", on_stop, suppress=False)
 
     try:
