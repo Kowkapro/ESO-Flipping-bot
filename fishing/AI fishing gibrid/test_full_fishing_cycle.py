@@ -1,20 +1,12 @@
 """
-Test 5: Full cycle — Map → Waypoint → Run → FISH
+Full fishing cycle — open map each time, pick nearest unvisited hook.
 
-Complete fishing cycle test:
-1. Open map, zoom, YOLO find nearest blue_hook, set waypoint
-2. Close map, turn to face waypoint
-3. Sprint toward waypoint with live compass steering
-4. Detect arrival: compass_marker lost + "рыбалки" text on screen
-5. Stop, face the fishing hole, cast line, catch fish, repeat
-
-Arrival detection:
-  - compass_marker disappears (within ~10m, distance label gone)
-  - AND/OR YOLO detects `interaction_prompt` class (e.g. "[E] Ловить рыбу")
-
-Fishing detection:
-  - Votan's Fisherman addon shows white hook icon on bite
-  - Pixel-based detection in center of screen
+Loop:
+1. Open map, zoom, YOLO scan for blue_hooks
+2. Pick nearest unvisited hook to player (center of map)
+3. Set waypoint → turn → sprint → detect arrival
+4. Fish if hole spawned, skip if not
+5. Repeat until no more hooks or F6
 
 Usage:
   python "fishing/AI fishing gibrid/test_full_fishing_cycle.py"
@@ -150,6 +142,10 @@ MAP_ZOOM_CLICKS = 10
 ZOOM_PLUS_REL = (0.659, 0.963)
 WAYPOINT_KEY = 'f'
 HOOK_MIN_CONF = 0.3
+HOOK_DEDUP_DIST = 30       # px — hooks closer than this are duplicates
+
+# Visited hook tracking
+VISITED_DEDUP_DIST = 40     # px — if hook is within this dist of a visited one, skip it
 
 # Mouse calibration (800 DPI, ESO look speed 15)
 PIXELS_PER_360 = 9300
@@ -171,7 +167,7 @@ RUN_DEAD_ZONE_FRAC = 0.03
 RUN_MAX_DURATION = 60.0
 RUN_DETECT_INTERVAL = 0.15
 MARKER_LOST_THRESHOLD = 8
-MARKER_LOST_MAX_RETRIES = 5     # max times to retry after marker lost (jump+nudge)
+MARKER_JUMP_THRESHOLD = 250  # px — if marker offset jumps this much in 1 frame, we passed through
 
 # Stuck detection
 STUCK_CHECK_INTERVAL = 2.0
@@ -194,6 +190,12 @@ DELAY_RECAST = (0.3, 0.8)
 
 # Interaction prompt detection (YOLO)
 INTERACTION_MIN_CONF = 0.3
+BUBBLES_MIN_CONF = 0.3
+
+# Arrival look-around (Phase C end)
+LOOKAROUND_TURN_DEG = 90       # degrees per turn step
+LOOKAROUND_STEPS = 4           # 4 × 90° = full 360°
+LOOKAROUND_PAUSE = 0.4         # pause after each turn to let YOLO scan
 
 
 def press_key(key):
@@ -235,6 +237,19 @@ def has_interaction_prompt(detections):
     )
 
 
+def has_bubbles(detections):
+    """Check if YOLO detections contain bubbles (fishing hole splash)."""
+    return any(
+        d["class"] == "bubbles" and d["conf"] >= BUBBLES_MIN_CONF
+        for d in detections
+    )
+
+
+def has_fishing_hole(detections):
+    """Check if YOLO detections contain interaction_prompt OR bubbles."""
+    return has_interaction_prompt(detections) or has_bubbles(detections)
+
+
 def detect_hook_bite(sct, monitor, screen_w, screen_h):
     """Detect white hook icon in center of screen (Votan's Fisherman addon)."""
     try:
@@ -256,53 +271,156 @@ def detect_hook_bite(sct, monitor, screen_w, screen_h):
         return False
 
 
-# ── Phase A: Set waypoint ────────────────────────────────────────────
+def look_around_for_hole(model, sct, monitor, stop_flag):
+    """Stop and look around 360° searching for bubbles or interaction_prompt.
 
-def phase_a_set_waypoint(model, sct, monitor, screen_w, screen_h, screen_cx, screen_cy):
-    """Open map, zoom, find nearest blue_hook, set waypoint, close map."""
-    print("=" * 40)
-    print("  PHASE A: Set waypoint on nearest hook")
-    print("=" * 40)
+    Returns: "interaction" if found, "no_spawn" if nothing after full rotation.
+    """
+    print("[LOOK] Stopping and looking around for fishing hole...")
 
-    print("\n[A1] Opening map...")
+    for step in range(LOOKAROUND_STEPS):
+        if stop_flag[0]:
+            return "no_spawn"
+
+        # YOLO scan at current view
+        detections = yolo_detect(model, sct, monitor)
+
+        if has_interaction_prompt(detections):
+            print(f"[LOOK] interaction_prompt found at step {step+1}!")
+            return "interaction"
+
+        if has_bubbles(detections):
+            print(f"[LOOK] bubbles found at step {step+1}! Walking toward them...")
+            # Walk forward briefly toward the bubbles, then check for prompt
+            pydirectinput.keyDown('w')
+            time.sleep(random.uniform(0.8, 1.5))
+            pydirectinput.keyUp('w')
+            time.sleep(0.3)
+
+            recheck = yolo_detect(model, sct, monitor)
+            if has_interaction_prompt(recheck):
+                print("[LOOK] interaction_prompt found after walking to bubbles!")
+                return "interaction"
+            # Even if no prompt, bubbles = hole exists, try pressing E
+            print("[LOOK] bubbles visible, trying to interact...")
+            return "interaction"
+
+        if step < LOOKAROUND_STEPS - 1:
+            # Turn ~90° to look in next direction
+            turn_px = int(LOOKAROUND_TURN_DEG * PIXELS_PER_DEGREE)
+            print(f"[LOOK] Step {step+1}/{LOOKAROUND_STEPS} — nothing, turning {LOOKAROUND_TURN_DEG}°...")
+            human_mouse_arc(turn_px)
+            time.sleep(LOOKAROUND_PAUSE)
+            # Take a small step so character faces camera direction
+            pydirectinput.keyDown('w')
+            time.sleep(0.1)
+            pydirectinput.keyUp('w')
+            time.sleep(0.2)
+
+    print("[LOOK] Full rotation — no fishing hole found")
+    return "no_spawn"
+
+
+def open_map_and_zoom(screen_w, screen_h):
+    """Open map and zoom in. Returns (zoom_x, zoom_y)."""
     press_key('m')
     time.sleep(random.uniform(0.8, 1.2))
-
     zoom_x = int(screen_w * ZOOM_PLUS_REL[0])
     zoom_y = int(screen_h * ZOOM_PLUS_REL[1])
-    print(f"[A2] Zooming in ({MAP_ZOOM_CLICKS} clicks on '+')...")
     for _ in range(MAP_ZOOM_CLICKS):
         pyautogui.click(zoom_x, zoom_y)
         time.sleep(random.uniform(0.05, 0.10))
     time.sleep(random.uniform(0.3, 0.5))
+    return zoom_x, zoom_y
 
-    print("[A3] Running YOLO detection on map...")
+
+# ── Pick nearest unvisited hook and set waypoint ─────────────────────
+
+def deduplicate_hooks(hooks, min_dist=HOOK_DEDUP_DIST):
+    """Remove duplicate hooks within a single YOLO scan (proximity-based)."""
+    unique = []
+    for h in hooks:
+        is_dup = any(
+            abs(u["cx"] - h["cx"]) < min_dist and abs(u["cy"] - h["cy"]) < min_dist
+            for u in unique
+        )
+        if not is_dup:
+            unique.append(h)
+    return unique
+
+
+def pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, visited):
+    """Open map, YOLO scan, pick nearest unvisited hook, set waypoint.
+
+    visited: list of (dx, dy) offsets from screen center for already-visited hooks.
+    Returns: hook dict with "dx", "dy" keys, or None if no unvisited hooks.
+    """
+    screen_cx = screen_w // 2
+    screen_cy = screen_h // 2
+
+    print("\n[WP] Opening map to find next hook...")
+    open_map_and_zoom(screen_w, screen_h)
+
+    # YOLO scan
     detections = yolo_detect(model, sct, monitor)
-    hooks = [d for d in detections if d["class"] == "blue_hook" and d["conf"] >= HOOK_MIN_CONF]
-    print(f"[A3] Found {len(hooks)} blue_hooks")
+    hooks = [
+        d for d in detections
+        if d["class"] == "blue_hook" and d["conf"] >= HOOK_MIN_CONF
+    ]
+
+    # Deduplicate within this scan
+    hooks = deduplicate_hooks(hooks)
+    print(f"[WP] Found {len(hooks)} hooks on map")
 
     if not hooks:
-        print("[A3] No hooks found! Closing map.")
+        print("[WP] No hooks visible — closing map")
         press_key('m')
-        return False
+        time.sleep(random.uniform(0.8, 1.2))
+        return None
 
-    best = min(hooks, key=lambda d:
-        (d["cx"] - screen_cx) ** 2 + (d["cy"] - screen_cy) ** 2)
-    dist = math.sqrt((best["cx"] - screen_cx) ** 2 + (best["cy"] - screen_cy) ** 2)
-    print(f"[A4] Nearest hook: conf={best['conf']:.3f}, dist={dist:.0f}px")
+    # Compute offset from screen center (= relative to player position)
+    for h in hooks:
+        h["dx"] = h["cx"] - screen_cx
+        h["dy"] = h["cy"] - screen_cy
 
-    target_x = int(best["cx"])
-    target_y = int(best["cy"])
-    print(f"[A5] Setting waypoint at ({target_x}, {target_y})...")
+    # Filter out visited hooks
+    unvisited = []
+    for h in hooks:
+        is_visited = any(
+            abs(h["dx"] - vx) < VISITED_DEDUP_DIST and abs(h["dy"] - vy) < VISITED_DEDUP_DIST
+            for vx, vy in visited
+        )
+        if not is_visited:
+            unvisited.append(h)
+
+    print(f"[WP] Unvisited: {len(unvisited)} / {len(hooks)}")
+
+    if not unvisited:
+        print("[WP] All visible hooks already visited — closing map")
+        press_key('m')
+        time.sleep(random.uniform(0.8, 1.2))
+        return None
+
+    # Pick nearest to screen center (= nearest to player)
+    nearest = min(unvisited, key=lambda h: h["dx"]**2 + h["dy"]**2)
+    dist_from_center = (nearest["dx"]**2 + nearest["dy"]**2) ** 0.5
+    print(f"[WP] Picking hook at ({nearest['cx']:.0f}, {nearest['cy']:.0f}), "
+          f"offset=({nearest['dx']:+.0f}, {nearest['dy']:+.0f}), "
+          f"dist={dist_from_center:.0f}px, conf={nearest['conf']:.3f}")
+
+    # Click on the hook to set waypoint
+    target_x = int(nearest["cx"])
+    target_y = int(nearest["cy"])
     pyautogui.moveTo(target_x, target_y, duration=random.uniform(0.3, 0.5))
     time.sleep(0.15)
     press_key(WAYPOINT_KEY)
     time.sleep(random.uniform(0.3, 0.5))
 
-    print("[A6] Closing map...")
+    # Close map
     press_key('m')
     time.sleep(random.uniform(0.8, 1.2))
-    return True
+
+    return nearest
 
 
 # ── Phase B: Turn to face waypoint ───────────────────────────────────
@@ -354,11 +472,11 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
     """Sprint toward waypoint with compass steering.
 
     Stops when:
-    - compass_marker lost for N frames (arrived)
+    - compass_marker lost for N frames → quick check for interaction_prompt
     - YOLO detects interaction_prompt (fishing hole nearby)
     - F6 pressed or timeout
 
-    Returns: "arrived", "interaction", "timeout", "stopped"
+    Returns: "interaction", "no_spawn", "timeout", "stopped", "arrived"
     """
     print()
     print("=" * 40)
@@ -370,14 +488,12 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
     marker_lost_count = 0
     steer_count = 0
     jump_count = 0
+    prev_offset = None
     start_time = time.time()
 
     # Stuck detection state
     last_stuck_check_time = time.time()
     last_marker_x = None
-
-    # Marker-lost-but-stuck retry counter
-    marker_lost_stuck_count = 0
 
     # Start sprinting
     print("[C] Starting sprint (W + Shift)...")
@@ -393,7 +509,7 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
                 print(f"\n[C] Max run time ({RUN_MAX_DURATION}s) reached!")
                 return "timeout"
 
-            # YOLO detect — only compass_marker matters while running
+            # YOLO detect
             detections = yolo_detect(model, sct, monitor)
             markers = [d for d in detections
                        if d["class"] == "compass_marker" and d["conf"] >= MARKER_MIN_CONF]
@@ -406,36 +522,9 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
             if not markers:
                 marker_lost_count += 1
                 if marker_lost_count >= MARKER_LOST_THRESHOLD:
-                    # Marker gone — do one more YOLO check for interaction prompt
-                    recheck = yolo_detect(model, sct, monitor)
-                    if has_interaction_prompt(recheck):
-                        print(f"\n[C] Marker lost + interaction_prompt visible — ARRIVED!")
-                        return "interaction"
-
-                    # No interaction prompt = probably stuck, NOT arrived
-                    # Jump to get unstuck and keep running
-                    marker_lost_stuck_count += 1
-                    print(f"\n[C] Marker lost but NO interaction text — STUCK! "
-                          f"(attempt {marker_lost_stuck_count}/{MARKER_LOST_MAX_RETRIES})")
-
-                    if marker_lost_stuck_count >= MARKER_LOST_MAX_RETRIES:
-                        print(f"[C] Gave up after {MARKER_LOST_MAX_RETRIES} stuck retries.")
-                        return "arrived"
-
-                    # Jump to get unstuck
-                    for _ in range(random.randint(2, 3)):
-                        press_key('space')
-                        time.sleep(random.uniform(0.3, 0.5))
-
-                    # Small random turn to try a different angle
-                    nudge = random.randint(200, 600) * random.choice([-1, 1])
-                    steer_smooth(nudge)
-                    print(f"  Nudged {nudge}px, continuing...")
-
-                    # Reset lost counter to give it another chance
-                    marker_lost_count = 0
-                    time.sleep(RUN_DETECT_INTERVAL)
-                    continue
+                    # Marker gone — we're near the waypoint, stop and look around
+                    print(f"\n[C] Marker lost — arrived at waypoint area")
+                    return "arrived"
 
                 if marker_lost_count % 3 == 0:
                     print(f"  [{elapsed:.1f}s] Marker lost ({marker_lost_count}/{MARKER_LOST_THRESHOLD})...")
@@ -447,12 +536,18 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
             marker = max(markers, key=lambda m: m["conf"])
             offset_screen = marker["cx"] - screen_cx
             marker_x = marker["cx"]
+            # Detect passing through waypoint: marker jumps from one side to the other
+            if prev_offset is not None:
+                offset_jump = abs(offset_screen - prev_offset)
+                if offset_jump >= MARKER_JUMP_THRESHOLD:
+                    print(f"\n[C] Marker jumped {offset_jump:.0f}px "
+                          f"({prev_offset:+.0f} → {offset_screen:+.0f}) — passed waypoint!")
+                    return "arrived"
+            prev_offset = offset_screen
 
-            # Log periodically
+            # Log every frame (temporary — to calibrate jump detection)
             steer_count += 1
-            if steer_count % 5 == 1:
-                print(f"  [{elapsed:.1f}s] marker offset={offset_screen:+.0f}px, "
-                      f"conf={marker['conf']:.3f}")
+            print(f"  [{elapsed:.1f}s] offset={offset_screen:+.0f}px, conf={marker['conf']:.3f}")
 
             # Stuck detection
             now = time.time()
@@ -570,10 +665,10 @@ def main():
         sys.exit(1)
 
     print("=" * 60)
-    print("  TEST 5: Full Fishing Cycle")
-    print("  Map → Waypoint → Run → FISH")
+    print("  FISHING BOT — Fresh Scan Each Iteration")
+    print("  Open map → pick nearest hook → run → fish → repeat")
     print("=" * 60)
-    print("  F5 — Run test (switch to ESO first!)")
+    print("  F5 — Start (switch to ESO first!)")
     print("  F6 — Stop immediately")
     print("=" * 60)
 
@@ -584,7 +679,6 @@ def main():
     screen_w = monitor["width"]
     screen_h = monitor["height"]
     screen_cx = screen_w // 2
-    screen_cy = screen_h // 2
     dead_zone_px = screen_w * DEAD_ZONE_FRAC
 
     dummy = np.zeros((640, 640, 3), dtype=np.uint8)
@@ -601,84 +695,91 @@ def main():
     keyboard.wait("f5")
     time.sleep(0.5)
 
-    # ── Phase A: Set waypoint ──
-    if not phase_a_set_waypoint(model, sct, monitor, screen_w, screen_h, screen_cx, screen_cy):
-        keyboard.unhook_all()
-        return
+    # ── Route loop — fresh scan each iteration ──
+    visited = []        # list of (dx, dy) offsets from screen center
+    total_fish = 0
+    total_casts = 0
+    fished_count = 0
+    skipped_count = 0
+    hook_num = 0
 
-    if stop_flag[0]:
-        keyboard.unhook_all()
-        return
+    while not stop_flag[0]:
+        hook_num += 1
 
-    # ── Phase B: Turn to face ──
-    centered = phase_b_turn_to_waypoint(model, sct, monitor, screen_cx, dead_zone_px, stop_flag)
+        print()
+        print("#" * 60)
+        print(f"  HOOK {hook_num}  (visited: {len(visited)})")
+        print("#" * 60)
 
-    if stop_flag[0] or not centered:
-        keyboard.unhook_all()
-        return
+        # Open map, scan, pick nearest unvisited hook, set waypoint
+        hook = pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, visited)
 
-    # ── Phase C: Run to waypoint ──
-    arrival = phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
+        if hook is None:
+            print("\n[DONE] No more unvisited hooks visible!")
+            break
 
-    if stop_flag[0]:
-        keyboard.unhook_all()
-        return
+        # Mark as visited immediately (by offset from screen center)
+        visited.append((hook["dx"], hook["dy"]))
 
-    print(f"\n[ARRIVAL] Reason: {arrival}")
+        if stop_flag[0]:
+            break
 
-    if arrival in ("arrived", "interaction"):
-        # Small pause to settle after running
-        time.sleep(random.uniform(0.3, 0.5))
+        # Turn to face waypoint
+        centered = phase_b_turn_to_waypoint(model, sct, monitor, screen_cx, dead_zone_px, stop_flag)
+
+        if stop_flag[0]:
+            break
+        if not centered:
+            print(f"[SKIP] Hook {hook_num} — couldn't find waypoint marker")
+            skipped_count += 1
+            continue
+
+        # Run to waypoint
+        arrival = phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
+
+        if stop_flag[0]:
+            break
+
+        print(f"\n[ARRIVAL] Hook {hook_num}: {arrival}")
+
+        # If we arrived but didn't see prompt during run, look around
+        if arrival == "arrived":
+            arrival = look_around_for_hole(model, sct, monitor, stop_flag)
+            print(f"[LOOK RESULT] Hook {hook_num}: {arrival}")
+
+        if stop_flag[0]:
+            break
 
         if arrival == "interaction":
-            # Phase C confirmed interaction_prompt — go straight to fishing.
-            # No movement allowed from here — Phase D controls everything.
-            print("[CHECK] Phase C confirmed interaction_prompt — starting fishing!")
-            has_interaction = True
+            time.sleep(random.uniform(0.3, 0.5))
+            fish, casts = phase_d_fish(sct, monitor, screen_w, screen_h, stop_flag)
+            total_fish += fish
+            total_casts += casts
+            fished_count += 1
+            print(f"[DONE] Hook {hook_num}: caught {fish} fish")
+
+        elif arrival == "no_spawn":
+            skipped_count += 1
+            print(f"[SKIP] Hook {hook_num} — no spawn")
+
+        elif arrival == "timeout":
+            skipped_count += 1
+            print(f"[SKIP] Hook {hook_num} — timeout")
+
         else:
-            # Arrived by marker loss — need to verify we're at a fishing hole
-            detections = yolo_detect(model, sct, monitor)
-            has_interaction = has_interaction_prompt(detections)
-            print(f"[CHECK] interaction_prompt visible: {has_interaction}")
+            skipped_count += 1
+            print(f"[SKIP] Hook {hook_num} — {arrival}")
 
-            if not has_interaction:
-                # Step backward (might have overshot)
-                print("[CHECK] No prompt — stepping backward...")
-                pydirectinput.keyDown('s')
-                time.sleep(random.uniform(0.8, 1.5))
-                pydirectinput.keyUp('s')
-                time.sleep(0.3)
-                detections = yolo_detect(model, sct, monitor)
-                has_interaction = has_interaction_prompt(detections)
-                print(f"[CHECK] Recheck after backstep: {has_interaction}")
-
-            if not has_interaction:
-                # Try looking around to find the hole
-                print("[CHECK] Still no prompt — looking around...")
-                for turn_dir in [1, -1, -1, 1]:
-                    human_mouse_arc(turn_dir * random.randint(400, 800))
-                    time.sleep(0.3)
-                    detections = yolo_detect(model, sct, monitor)
-                    if has_interaction_prompt(detections):
-                        has_interaction = True
-                        print("[CHECK] Found prompt after turning!")
-                        break
-
-        if has_interaction:
-            # ── Phase D: FISH! ──
-            fish_caught, casts_made = phase_d_fish(sct, monitor, screen_w, screen_h, stop_flag)
-
-            print()
-            print("=" * 60)
-            print(f"[TEST 5] FISHING COMPLETE!")
-            print(f"  Fish caught: {fish_caught}")
-            print(f"  Casts made: {casts_made}")
-            print("=" * 60)
-        else:
-            print("[CHECK] No interaction_prompt found nearby.")
-            print("[CHECK] Might not be at the right spot.")
-    else:
-        print(f"[RESULT] Did not arrive at fishing hole (reason: {arrival})")
+    # ── Summary ──
+    print()
+    print("=" * 60)
+    print("  ROUTE COMPLETE!")
+    print(f"  Hooks visited: {fished_count + skipped_count}")
+    print(f"  Fished:  {fished_count}")
+    print(f"  Skipped: {skipped_count}")
+    print(f"  Total fish caught: {total_fish}")
+    print(f"  Total casts: {total_casts}")
+    print("=" * 60)
 
     keyboard.unhook_all()
 
