@@ -5,7 +5,7 @@ Shows what the model sees: bounding boxes, class names, confidence.
 Run this, switch to ESO, and walk around to see detections.
 
 Usage:
-  python "fishing/AI fishing gibrid/yolo_live_view.py"
+  python "fishing/tools/yolo_live_view.py"
 
 Controls:
   Q or ESC — quit (in the OpenCV window)
@@ -34,7 +34,7 @@ COLORS = {
 
 def main():
     model_path = os.path.join(
-        os.path.dirname(__file__), "runs", "eso_fishing", "weights", "best.pt"
+        os.path.dirname(__file__), "..", "training", "runs", "eso_fishing", "weights", "best.pt"
     )
     if not os.path.exists(model_path):
         print(f"[ERROR] Model not found: {model_path}")

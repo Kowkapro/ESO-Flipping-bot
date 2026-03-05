@@ -23,12 +23,12 @@ node_modules/
 .idea/
 
 # YOLO / ML (large files)
-fishing/AI fishing gibrid/dataset/images/
-fishing/AI fishing gibrid/dataset/train/
-fishing/AI fishing gibrid/dataset/val/
-fishing/AI fishing gibrid/dataset/*.cache
-fishing/AI fishing gibrid/runs/
 *.pt
+fishing/training/dataset/images/
+fishing/training/dataset/train/
+fishing/training/dataset/val/
+fishing/training/dataset/*.cache
+fishing/training/runs/
 
 # Media (large files)
 *.mp4

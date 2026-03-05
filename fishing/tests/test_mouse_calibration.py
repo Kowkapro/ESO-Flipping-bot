@@ -14,7 +14,7 @@ Result: PIXELS_PER_360 — how many px of mouse movement = one full rotation.
 From this we derive PIXELS_PER_DEGREE = PIXELS_PER_360 / 360.
 
 Usage:
-  python "fishing/AI fishing gibrid/test_mouse_calibration.py"
+  python "fishing/tests/test_mouse_calibration.py"
 
 Controls:
   F5 — Send test rotation (switch to ESO first!)

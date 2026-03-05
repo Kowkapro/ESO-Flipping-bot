@@ -2,7 +2,7 @@
 Merge all CVAT YOLO exports from exports/ and rebuild train/val dataset.
 
 Usage:
-    python "fishing/AI fishing gibrid/build_dataset.py"
+    python "fishing/training/build_dataset.py"
 """
 
 import zipfile

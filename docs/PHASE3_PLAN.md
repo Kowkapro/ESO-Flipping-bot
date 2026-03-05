@@ -94,7 +94,11 @@ Implementation: screenshot center screen → threshold white text → Tesseract 
 ## Phase 4: YOLO AI Replacement (ACTIVE) 🟢
 
 Phase 4 replaces Phase 3's blind navigation with visual AI:
-- See `fishing/AI fishing gibrid/` for code
-- Uses YOLOv8s trained on ESO screenshots (4 classes)
+- Main bot: `fishing/main.py`
+- Alt bot (class-based): `fishing/yolo_fisher.py`
+- Uses YOLOv8s v2 trained on ESO screenshots (**8 classes**, mAP50=0.879)
+- Classes: blue_hook, bubbles, compass_marker, enemy, interaction_prompt, hp_bar, xp_popup, destination_text
 - Navigates via in-game map + compass instead of /reloadui coordinates
-- See plan details in the session where Phase 4 was developed
+- **Full fishing cycle written** — fresh YOLO scan of map each iteration
+- Debug tool: `fishing/tools/yolo_live_view.py` (real-time detection overlay)
+- Training: `fishing/training/` (train.py, build_dataset.py, dataset/, exports/, runs/)

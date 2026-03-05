@@ -10,7 +10,7 @@ Full cycle test:
 The bot will NOT run — only set waypoint and rotate.
 
 Usage:
-  python "fishing/AI fishing gibrid/test_waypoint_and_turn.py"
+  python "fishing/tests/test_waypoint_and_turn.py"
 
 Controls:
   F5 — Run test (switch to ESO first!)
@@ -179,7 +179,7 @@ def yolo_detect(model, sct, monitor):
 
 def main():
     model_path = os.path.join(
-        os.path.dirname(__file__), "runs", "eso_fishing", "weights", "best.pt"
+        os.path.dirname(__file__), "..", "training", "runs", "eso_fishing", "weights", "best.pt"
     )
     if not os.path.exists(model_path):
         print(f"[ERROR] Model not found: {model_path}")

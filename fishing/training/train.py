@@ -2,8 +2,8 @@
 Train YOLOv8 on ESO fishing dataset.
 
 Usage:
-  python "fishing/AI fishing gibrid/train.py"
-  python "fishing/AI fishing gibrid/train.py" --model yolov8s.pt --epochs 150
+  python "fishing/training/train.py"
+  python "fishing/training/train.py" --model yolov8s.pt --epochs 150
 """
 
 import argparse

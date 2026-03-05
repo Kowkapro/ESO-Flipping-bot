@@ -4,7 +4,7 @@ ESO YOLO Fishing Bot — Phase 4: Visual AI Navigation
 Uses a trained YOLOv8s model to:
 1. Open map → find nearest blue_hook (river fishing hole)
 2. Set waypoint → close map
-3. Navigate via compass (waypoint_marker steering)
+3. Navigate via compass (compass_marker steering)
 4. Detect arrival (bubbles / OCR text)
 5. Fish using existing script (cast → hook → reel → loot)
 
@@ -13,8 +13,8 @@ Controls:
   F6 — Stop
 
 Usage:
-  python "fishing/AI fishing gibrid/yolo_fisher.py"
-  python "fishing/AI fishing gibrid/yolo_fisher.py" --confidence 0.4 --zoom 5
+  python "fishing/yolo_fisher.py"
+  python "fishing/yolo_fisher.py" --confidence 0.4 --zoom 5
 """
 
 import argparse
@@ -67,7 +67,7 @@ WAYPOINT_KEY = 'f'            # Key to set waypoint on map
 # ── YOLO Thresholds ──────────────────────────────────────────────────
 HOOK_MIN_CONF = 0.3           # Min confidence for blue_hook on map
 BUBBLE_MIN_CONF = 0.5         # Min confidence for bubbles (arrival check)
-WAYPOINT_MIN_CONF = 0.3       # Min confidence for waypoint_marker
+WAYPOINT_MIN_CONF = 0.3       # Min confidence for compass_marker
 
 # ── Fishing (copied from fishing_bot.py to avoid global state issues) ──
 HOOK_WHITE_THRESHOLD = 220
@@ -617,8 +617,8 @@ class YOLOFisher:
                     print(f"[NAV] {elapsed:.0f}s | Detections: {det_summary} | "
                           f"steers: {steer_count}, no_marker: {no_marker_count}")
 
-                # Find waypoint_marker on compass
-                markers = self.detector.find_class(detections, "waypoint_marker")
+                # Find compass_marker on compass
+                markers = self.detector.find_class(detections, "compass_marker")
                 markers = [m for m in markers if m["conf"] >= WAYPOINT_MIN_CONF]
 
                 if markers:
@@ -914,7 +914,7 @@ def main():
 
     # Load YOLO model
     model_path = os.path.join(
-        os.path.dirname(__file__), "runs", "eso_fishing", "weights", "best.pt"
+        os.path.dirname(__file__), "training", "runs", "eso_fishing", "weights", "best.pt"
     )
     if not os.path.exists(model_path):
         print(f"\n[ERROR] Model not found: {model_path}")

@@ -11,7 +11,7 @@ While running, the bot watches the compass_marker every ~150ms.
 If it drifts off-center, smooth mouse correction keeps it centered.
 
 Usage:
-  python "fishing/AI fishing gibrid/test_run_to_waypoint.py"
+  python "fishing/tests/test_run_to_waypoint.py"
 
 Controls:
   F5 — Run test (switch to ESO first!)
@@ -393,7 +393,7 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_cx, stop_flag):
 
 def main():
     model_path = os.path.join(
-        os.path.dirname(__file__), "runs", "eso_fishing", "weights", "best.pt"
+        os.path.dirname(__file__), "..", "training", "runs", "eso_fishing", "weights", "best.pt"
     )
     if not os.path.exists(model_path):
         print(f"[ERROR] Model not found: {model_path}")

@@ -1,4 +1,4 @@
-path: d:/Claude Code/Projects/ESO/ESO-Flipping-bot/fishing/AI fishing gibrid/dataset
+path: d:/Claude Code/Projects/ESO/ESO-Flipping-bot/fishing/training/dataset
 train: train/images
 val: val/images
 

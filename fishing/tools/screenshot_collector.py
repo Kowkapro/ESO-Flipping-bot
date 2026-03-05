@@ -15,7 +15,7 @@ Controls:
   F8 — save "general" screenshot (anything else useful)
   F10 — stop
 
-Screenshots are saved to: fishing/AI fishing gibrid/dataset/images/{category}/
+Screenshots are saved to: fishing/training/dataset/images/{category}/
 """
 
 import os
@@ -29,7 +29,7 @@ from datetime import datetime
 
 # ── Settings ─────────────────────────────────────────────────────────
 MONITOR_INDEX = 1
-BASE_DIR = os.path.join(os.path.dirname(__file__), "dataset", "images")
+BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "training", "dataset", "images")
 CATEGORIES = [
     "map",          # F1: Map open with blue_hook icons
     "gameplay",     # F2: World view (bubbles, enemies, fishing holes)

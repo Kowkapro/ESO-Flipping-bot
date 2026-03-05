@@ -9,10 +9,10 @@ Loop:
 5. Repeat until no more hooks or F6
 
 Usage:
-  python "fishing/AI fishing gibrid/test_full_fishing_cycle.py"
+  python fishing/main.py
 
 Controls:
-  F5 — Run test (switch to ESO first!)
+  F5 — Run (switch to ESO first!)
   F6 — Stop immediately (releases all keys)
 """
 
@@ -658,7 +658,7 @@ def phase_d_fish(sct, monitor, screen_w, screen_h, stop_flag):
 
 def main():
     model_path = os.path.join(
-        os.path.dirname(__file__), "runs", "eso_fishing", "weights", "best.pt"
+        os.path.dirname(__file__), "training", "runs", "eso_fishing", "weights", "best.pt"
     )
     if not os.path.exists(model_path):
         print(f"[ERROR] Model not found: {model_path}")
