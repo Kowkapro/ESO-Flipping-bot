@@ -7,3 +7,4 @@ requests>=2.31.0
 python-dotenv>=1.0.0
 ultralytics>=8.0.0
 mss>=10.0.0
+keyboard>=0.13.5

@@ -14,8 +14,13 @@ Requires: FishingNav addon active in ESO, admin rights for keyboard hooks.
 """
 
 import math
+import os
+import sys
 import time
 import threading
+
+# Add parent dir (fishing/) to path so we can import navigation
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import keyboard
 import pydirectinput

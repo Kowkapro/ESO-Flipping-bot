@@ -39,10 +39,7 @@ from PIL import ImageGrab
 from ultralytics import YOLO
 
 # Load .env from project root
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
-
-# Add fishing/ to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from navigation import _send_mouse_move, MOUSE_SENSITIVITY
 

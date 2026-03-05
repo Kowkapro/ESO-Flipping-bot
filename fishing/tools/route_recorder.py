@@ -26,6 +26,9 @@ import sys
 import time
 import threading
 
+# Add parent dir (fishing/) to path so we can import navigation
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 import keyboard
 
 from navigation import (
