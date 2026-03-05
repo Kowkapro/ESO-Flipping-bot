@@ -24,6 +24,7 @@ import random
 import sys
 import time
 
+import easyocr
 import keyboard
 import mss
 import cv2
@@ -78,7 +79,7 @@ def human_mouse_arc(total_dx):
         return
 
     sign = 1 if total_dx > 0 else -1
-    duration = 0.10 + (abs_dx / 5000) * 0.30
+    duration = 0.05 + (abs_dx / 5000) * 0.15
     duration *= random.uniform(0.9, 1.1)
     arc_height = random.uniform(2, 6) * random.choice([-1, 1])
 
@@ -141,7 +142,7 @@ def steer_smooth(total_dx):
 MAP_ZOOM_CLICKS = 10
 ZOOM_PLUS_REL = (0.659, 0.963)
 WAYPOINT_KEY = 'f'
-HOOK_MIN_CONF = 0.3
+HOOK_MIN_CONF = 0.2
 HOOK_DEDUP_DIST = 30       # px — hooks closer than this are duplicates
 
 # Visited hook tracking
@@ -158,7 +159,7 @@ STEER_DAMPING = 0.9
 STEER_MAX_PX = 5000
 DEAD_ZONE_FRAC = 0.02
 MAX_ALIGN_ATTEMPTS = 20
-ALIGN_PAUSE = 0.15
+ALIGN_PAUSE = 0.08
 
 # Running (Phase C)
 RUN_STEER_DAMPING = 0.7
@@ -166,13 +167,17 @@ RUN_STEER_MAX_PX = 1500
 RUN_DEAD_ZONE_FRAC = 0.03
 RUN_MAX_DURATION = 60.0
 RUN_DETECT_INTERVAL = 0.15
-MARKER_LOST_THRESHOLD = 8
+MARKER_LOST_THRESHOLD = 4
 MARKER_JUMP_THRESHOLD = 250  # px — if marker offset jumps this much in 1 frame, we passed through
 
 # Stuck detection
 STUCK_CHECK_INTERVAL = 2.0
 STUCK_MIN_CHANGE_PX = 15
 STUCK_JUMP_COUNT = 3
+
+# Circling detection — marker keeps flipping sides = we're orbiting the waypoint
+CIRCLING_FLIP_THRESHOLD = 4   # sign changes in last N offsets = circling
+CIRCLING_HISTORY_SIZE = 8     # track last N offsets
 
 # Fishing (Phase D)
 CAST_KEY = 'e'
@@ -188,9 +193,10 @@ DELAY_AFTER_REEL = (1.5, 3.0)
 DELAY_AFTER_LOOT = (0.5, 1.5)
 DELAY_RECAST = (0.3, 0.8)
 
-# Interaction prompt detection (YOLO)
+# Interaction prompt detection (YOLO + OCR)
 INTERACTION_MIN_CONF = 0.3
 BUBBLES_MIN_CONF = 0.3
+FISHING_KEYWORDS = ["рыбалк", "ловл", "fishing", "рыбн"]  # substrings that indicate fishing hole
 
 # Arrival look-around (Phase C end)
 LOOKAROUND_TURN_DEG = 90       # degrees per turn step
@@ -211,7 +217,7 @@ def yolo_detect(model, sct, monitor):
     screenshot = sct.grab(monitor)
     frame = np.array(screenshot)
     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    results = model(frame_bgr, imgsz=640, conf=0.2, verbose=False)
+    results = model(frame_bgr, imgsz=1280, conf=0.2, verbose=False)
 
     detections = []
     if results[0].boxes is not None:
@@ -250,6 +256,43 @@ def has_fishing_hole(detections):
     return has_interaction_prompt(detections) or has_bubbles(detections)
 
 
+def is_fishing_prompt(ocr_reader, detections, sct, monitor):
+    """Check if any interaction_prompt contains fishing-related text via OCR.
+
+    Returns True only if YOLO sees interaction_prompt AND OCR reads fishing keywords.
+    Returns False for wayshrines, NPCs, doors, etc.
+    """
+    prompts = [d for d in detections
+               if d["class"] == "interaction_prompt" and d["conf"] >= INTERACTION_MIN_CONF]
+    if not prompts:
+        return False
+
+    prompt = max(prompts, key=lambda d: d["conf"])
+
+    # Crop the prompt region from screen
+    pad = 10
+    x1 = max(0, int(prompt["x1"]) - pad)
+    y1 = max(0, int(prompt["y1"]) - pad)
+    x2 = int(prompt["x2"]) + pad
+    y2 = int(prompt["y2"]) + pad
+
+    region = {
+        "left": monitor["left"] + x1,
+        "top": monitor["top"] + y1,
+        "width": x2 - x1,
+        "height": y2 - y1,
+    }
+    screenshot = sct.grab(region)
+    crop = np.array(screenshot)
+    crop_bgr = cv2.cvtColor(crop, cv2.COLOR_BGRA2BGR)
+
+    results = ocr_reader.readtext(crop_bgr, detail=0)
+    text = " ".join(results).lower()
+    is_fishing = any(kw in text for kw in FISHING_KEYWORDS)
+    print(f"[OCR] \"{' '.join(results)}\" → {'FISHING' if is_fishing else 'skip'}")
+    return is_fishing
+
+
 def detect_hook_bite(sct, monitor, screen_w, screen_h):
     """Detect white hook icon in center of screen (Votan's Fisherman addon)."""
     try:
@@ -271,7 +314,7 @@ def detect_hook_bite(sct, monitor, screen_w, screen_h):
         return False
 
 
-def look_around_for_hole(model, sct, monitor, stop_flag):
+def look_around_for_hole(model, ocr_reader, sct, monitor, stop_flag):
     """Stop and look around 360° searching for bubbles or interaction_prompt.
 
     Returns: "interaction" if found, "no_spawn" if nothing after full rotation.
@@ -286,8 +329,11 @@ def look_around_for_hole(model, sct, monitor, stop_flag):
         detections = yolo_detect(model, sct, monitor)
 
         if has_interaction_prompt(detections):
-            print(f"[LOOK] interaction_prompt found at step {step+1}!")
-            return "interaction"
+            if is_fishing_prompt(ocr_reader, detections, sct, monitor):
+                print(f"[LOOK] Fishing prompt confirmed at step {step+1}!")
+                return "interaction"
+            else:
+                print(f"[LOOK] Non-fishing prompt at step {step+1}, skipping...")
 
         if has_bubbles(detections):
             print(f"[LOOK] bubbles found at step {step+1}! Walking toward them...")
@@ -298,8 +344,8 @@ def look_around_for_hole(model, sct, monitor, stop_flag):
             time.sleep(0.3)
 
             recheck = yolo_detect(model, sct, monitor)
-            if has_interaction_prompt(recheck):
-                print("[LOOK] interaction_prompt found after walking to bubbles!")
+            if has_interaction_prompt(recheck) and is_fishing_prompt(ocr_reader, recheck, sct, monitor):
+                print("[LOOK] Fishing prompt found after walking to bubbles!")
                 return "interaction"
             # Even if no prompt, bubbles = hole exists, try pressing E
             print("[LOOK] bubbles visible, trying to interact...")
@@ -368,9 +414,21 @@ def pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, visited):
         if d["class"] == "blue_hook" and d["conf"] >= HOOK_MIN_CONF
     ]
 
-    # Deduplicate within this scan
+    # Filter out detections near screen center — that's the player icon, not a hook
+    PLAYER_ICON_RADIUS = 60  # px — player icon + nearby UI elements at map center
+    hooks = [h for h in hooks
+             if ((h["cx"] - screen_cx)**2 + (h["cy"] - screen_cy)**2) ** 0.5 > PLAYER_ICON_RADIUS]
+
+    # Log all raw detections before filtering
+    print(f"[WP] Raw YOLO: {len(hooks)} blue_hook detections (after player icon filter):")
+    for i, h in enumerate(sorted(hooks, key=lambda h: h["conf"], reverse=True)):
+        dist = ((h["cx"] - screen_cx)**2 + (h["cy"] - screen_cy)**2) ** 0.5
+        print(f"  #{i+1}: pos=({h['cx']:.0f},{h['cy']:.0f}) conf={h['conf']:.3f} dist={dist:.0f}px")
+
+    # Deduplicate within this scan (sort by confidence first so best detection survives)
+    hooks = sorted(hooks, key=lambda h: h["conf"], reverse=True)
     hooks = deduplicate_hooks(hooks)
-    print(f"[WP] Found {len(hooks)} hooks on map")
+    print(f"[WP] After dedup: {len(hooks)} hooks")
 
     if not hooks:
         print("[WP] No hooks visible — closing map")
@@ -394,6 +452,9 @@ def pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, visited):
             unvisited.append(h)
 
     print(f"[WP] Unvisited: {len(unvisited)} / {len(hooks)}")
+    for i, h in enumerate(sorted(unvisited, key=lambda h: h["dx"]**2 + h["dy"]**2)):
+        dist = (h["dx"]**2 + h["dy"]**2) ** 0.5
+        print(f"  unvisited #{i+1}: offset=({h['dx']:+.0f},{h['dy']:+.0f}) dist={dist:.0f}px conf={h['conf']:.3f}")
 
     if not unvisited:
         print("[WP] All visible hooks already visited — closing map")
@@ -416,7 +477,7 @@ def pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, visited):
     target_x = int(nearest["cx"])
     target_y = int(nearest["cy"])
     pyautogui.moveTo(target_x, target_y, duration=random.uniform(0.3, 0.5))
-    time.sleep(0.15)
+    time.sleep(random.uniform(0.5, 0.7))
     press_key(WAYPOINT_KEY)
     time.sleep(random.uniform(0.3, 0.5))
 
@@ -465,14 +526,14 @@ def phase_b_turn_to_waypoint(model, sct, monitor, screen_cx, dead_zone_px, stop_
         correction = int(mouse_px * STEER_DAMPING)
         correction = max(-STEER_MAX_PX, min(STEER_MAX_PX, correction))
         human_mouse_arc(correction)
-        time.sleep(random.uniform(0.15, 0.35))
+        time.sleep(random.uniform(0.08, 0.15))
 
     return centered
 
 
 # ── Phase C: Run to waypoint ─────────────────────────────────────────
 
-def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag):  # noqa: C901
+def phase_c_run_to_waypoint(model, ocr_reader, sct, monitor, screen_w, screen_cx, stop_flag):  # noqa: C901
     """Sprint toward waypoint with compass steering.
 
     Stops when:
@@ -493,6 +554,7 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
     steer_count = 0
     jump_count = 0
     prev_offset = None
+    offset_history = []   # track sign changes for circling detection
     start_time = time.time()
 
     # Stuck detection state
@@ -518,10 +580,11 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
             markers = [d for d in detections
                        if d["class"] == "compass_marker" and d["conf"] >= MARKER_MIN_CONF]
 
-            # Check for interaction_prompt in current detections (early arrival)
+            # Check for interaction_prompt + OCR to verify it's a fishing hole
             if has_interaction_prompt(detections):
-                print(f"\n[C] interaction_prompt detected — ARRIVED!")
-                return "interaction"
+                if is_fishing_prompt(ocr_reader, detections, sct, monitor):
+                    print(f"\n[C] Fishing hole confirmed by OCR — stopping!")
+                    return "interaction"
 
             if not markers:
                 marker_lost_count += 1
@@ -537,7 +600,9 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
 
             # Marker found — reset lost counter
             marker_lost_count = 0
-            marker = max(markers, key=lambda m: m["conf"])
+            # Pick marker closest to center (waypoint should be ~centered after Phase B)
+            # Using highest-conf picks quest markers at compass edges instead
+            marker = min(markers, key=lambda m: abs(m["cx"] - screen_cx))
             offset_screen = marker["cx"] - screen_cx
             marker_x = marker["cx"]
             # Detect passing through waypoint: marker jumps from one side to the other
@@ -548,6 +613,17 @@ def phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
                           f"({prev_offset:+.0f} → {offset_screen:+.0f}) — passed waypoint!")
                     return "arrived"
             prev_offset = offset_screen
+
+            # Circling detection: track sign changes
+            offset_history.append(offset_screen)
+            if len(offset_history) > CIRCLING_HISTORY_SIZE:
+                offset_history.pop(0)
+            if len(offset_history) >= CIRCLING_HISTORY_SIZE:
+                signs = [1 if o >= 0 else -1 for o in offset_history]
+                flips = sum(1 for i in range(1, len(signs)) if signs[i] != signs[i-1])
+                if flips >= CIRCLING_FLIP_THRESHOLD:
+                    print(f"\n[C] Circling detected ({flips} flips in {CIRCLING_HISTORY_SIZE} frames) — arrived!")
+                    return "arrived"
 
             # Log every frame (temporary — to calibrate jump detection)
             steer_count += 1
@@ -662,7 +738,7 @@ def phase_d_fish(sct, monitor, screen_w, screen_h, stop_flag):
 
 def main():
     model_path = os.path.join(
-        os.path.dirname(__file__), "training", "runs", "eso_fishing", "weights", "best.pt"
+        os.path.dirname(__file__), "training", "runs", "eso_fishing_v3", "weights", "best.pt"
     )
     if not os.path.exists(model_path):
         print(f"[ERROR] Model not found: {model_path}")
@@ -688,6 +764,10 @@ def main():
     dummy = np.zeros((640, 640, 3), dtype=np.uint8)
     model(dummy, verbose=False)
     print(f"[YOLO] Ready. Screen: {screen_w}x{screen_h}")
+
+    print("[OCR] Loading EasyOCR (ru+en)...")
+    ocr_reader = easyocr.Reader(["ru", "en"], gpu=True, verbose=False)
+    print("[OCR] Ready.")
     print("\nPress F5 when ESO is focused...\n")
 
     stop_flag = [False]
@@ -743,7 +823,7 @@ def main():
             continue
 
         # Run to waypoint
-        arrival = phase_c_run_to_waypoint(model, sct, monitor, screen_w, screen_cx, stop_flag)
+        arrival = phase_c_run_to_waypoint(model, ocr_reader, sct, monitor, screen_w, screen_cx, stop_flag)
 
         if stop_flag[0]:
             break
@@ -752,7 +832,7 @@ def main():
 
         # If we arrived but didn't see prompt during run, look around
         if arrival == "arrived":
-            arrival = look_around_for_hole(model, sct, monitor, stop_flag)
+            arrival = look_around_for_hole(model, ocr_reader, sct, monitor, stop_flag)
             print(f"[LOOK RESULT] Hook {hook_num}: {arrival}")
 
         if stop_flag[0]:
