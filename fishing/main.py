@@ -408,7 +408,11 @@ def pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, visited):
           f"offset=({nearest['dx']:+.0f}, {nearest['dy']:+.0f}), "
           f"dist={dist_from_center:.0f}px, conf={nearest['conf']:.3f}")
 
-    # Click on the hook to set waypoint
+    # Remove old waypoint first (can't place new one if old exists)
+    press_key(WAYPOINT_KEY)
+    time.sleep(random.uniform(0.2, 0.4))
+
+    # Click on the hook to set new waypoint
     target_x = int(nearest["cx"])
     target_y = int(nearest["cy"])
     pyautogui.moveTo(target_x, target_y, duration=random.uniform(0.3, 0.5))
@@ -718,8 +722,12 @@ def main():
             print("\n[DONE] No more unvisited hooks visible!")
             break
 
-        # Mark as visited immediately (by offset from screen center)
-        visited.append((hook["dx"], hook["dy"]))
+        # Compensate player movement: after navigating to hook at (dx, dy),
+        # the player shifted by that amount, so all old visited offsets must adjust
+        hook_dx, hook_dy = hook["dx"], hook["dy"]
+        visited = [(vx - hook_dx, vy - hook_dy) for vx, vy in visited]
+        # Mark current hook as visited (now at ~(0,0) since we're heading there)
+        visited.append((0, 0))
 
         if stop_flag[0]:
             break
