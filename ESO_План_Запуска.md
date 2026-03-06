@@ -78,12 +78,17 @@
 - [x] FishingNav addon v2 (пиксельная полоска с координатами + события) (06.03.26)
 - [x] pixel_bridge.py (чтение + декодирование пикселей) — протестировано, 30/30 checksum OK
 - [x] Навигация работает: bearing_to + angle_to_mouse_px (ESO CCW heading), dist 10K→400
-- [x] Stuck detection (координаты не меняются 3 сек → jump/backtrack/sidestep/random)
-- [x] Маршрут из 17 лунок записан вручную → `fishing/route_holes.json`
+- [x] Stuck detection: 9 уровней (jump → sidestep L/R → backtrack → diagonal → wide arc → random → skip)
+- [x] Маршрут из 17 лунок → `fishing/route_holes.json`
 - [x] main_v5.py: последовательный обход маршрута (циклический), старт с ближайшей лунки
-- [x] Аддон: `GetGameCameraInteractableActionInfo()` для детекции промпта + фильтр "рыбалк"
-- [ ] **>>> ТЕКУЩИЙ ЭТАП: тестирование детекции лунки (is_fishing флаг) + запуск рыбалки <<<**
-- [ ] Полный цикл: навигация → детекция промпта → E → phase_d_fish → следующая лунка
+- [x] Аддон: `GetGameCameraInteractableActionInfo()` + фильтр "рыбалк" + `IsUnitSwimming`
+- [x] Рыбалка: `detect_hook_mss()` (mss вместо ImageGrab), полный цикл cast→bite→reel→loot
+- [x] Быстрая детекция истощения лунки через `is_fishing` флаг (вместо 2x45с таймаут)
+- [x] Бой: AoE скил '5' по `in_combat` флагу, автовозврат к навигации
+- [x] Игнорирование лунок при плавании (`is_swimming`)
+- [x] Игнорирование лунок далеко от цели (dist > 2400) — не останавливается на чужих лунках
+- [ ] **>>> ТЕКУЩИЙ ЭТАП: тестирование полного маршрута 17 лунок, фикс координат <<<**
+- [ ] Калибровка координат всех 17 лунок
 
 ---
 

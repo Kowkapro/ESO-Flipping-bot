@@ -245,28 +245,43 @@ python fishing/main.py
 1. Загрузка маршрута из `route_holes.json` (17 лунок)
 2. Старт с ближайшей лунки
 3. Навигация: bearing_to → rotate_to_target → sprint с коррекцией каждые 100мс
-4. Детекция промпта через pixel bridge: `is_fishing` (аддон проверяет "рыбалк" в interactableName)
-5. При `is_fishing=True` → стоп → E → phase_d_fish
-6. При `arrived` без промпта → look_for_fishing_hole (360° поворот по 30°)
-7. Циклический обход: 1→2→...→17→1
+4. Во время бега: проверка флагов pixel bridge каждый кадр:
+   - `in_combat=True` → стоп → AoE скил '5' → возврат к навигации
+   - `is_fishing=True` + `dist < 2400` + не плывём → стоп → рыбалка
+   - `is_fishing=True` + `is_swimming=True` → игнорируем (нельзя рыбачить плывя)
+   - `is_fishing=True` + `dist > 2400` → игнорируем (чужая лунка по пути)
+5. При `arrived` без промпта → look_for_fishing_hole (360° поворот по 30°)
+6. Рыбалка: cast → detect_hook_mss (белые пиксели центра экрана) → reel → loot → repeat
+7. Быстрая детекция истощения: проверка `is_fishing` после каждого лута (вместо 2x45с таймаут)
+8. Stuck: 9 уровней (jump → sidestep L/R → backtrack → diagonal L/R → wide arc L/R → random → skip)
+9. Циклический обход: 1→2→...→17→1
 
-**Что YOLO всё ещё делает:** только bite detection (белый крючок Votan's)
+**Pixel Bridge флаги (6 бит):**
+| Бит | Флаг | API |
+|-----|-------|-----|
+| 0 | inCombat | `EVENT_PLAYER_COMBAT_STATE` |
+| 1 | hasInteraction | `GetGameCameraInteractableActionInfo()` |
+| 2 | isFishing | interactableName содержит "рыбалк" |
+| 3 | reticleHidden | `IsReticleHidden()` |
+| 4 | isSwimming | `IsUnitSwimming("player")` |
 
-**ESO координатная система (реверс-инженерия):**
-- Heading 0 = North (Y-), CCW: 90°=West, 180°=South, 270°=East
-- bearing = `atan2(-dx, -dy)`, mouse = `-angle / (2π) * PIXELS_PER_360`
+**Тесты:**
+- [x] Навигация: bearing верный, dist 10K→400, arrived!
+- [x] Рыбалка: 25 рыб за сессию, лунки истощаются корректно (10+15 рыб)
+- [x] Бой: AoE убивает мобов, бот возвращается к маршруту
+- [x] Stuck recovery: sidestep_L обходит мосты (ранее зацикливался на jump/backtrack)
+- [ ] **>>> Полный маршрут 17 лунок — тестируется <<<**
 
 **Шаги реализации:**
-- [x] FishingNav addon v2 (CT_BACKDROP pixel blocks + combat event) (06.03.26)
-- [x] pixel_bridge.py (reader + decoder + checksum validation) — 30/30 frames OK
-- [x] Навигация работает: bearing верный, dist 10K→400, arrived!
-- [x] Stuck detection с эскалацией (jump → backtrack → sidestep → random → skip)
-- [x] 17 лунок записаны вручную (route recorder с debounce)
-- [x] main_v5.py: sequential cyclic route, nearest-start
-- [x] Аддон: `GetGameCameraInteractableActionInfo()` + фильтр "рыбалк" для is_fishing
-- [x] Фикс: `pixelBridgeReady` guard для /reloadui (duplicate name error)
-- [ ] **>>> ТЕСТИРОВАНИЕ: is_fishing детекция + phase_d_fish запуск <<<**
-- [ ] Полный цикл: навигация → детекция → рыбалка → следующая лунка
+- [x] FishingNav addon v2 (CT_BACKDROP pixel blocks + combat/swimming events) (06.03.26)
+- [x] pixel_bridge.py (reader + decoder + checksum) — 30/30 frames OK
+- [x] main_v5.py: навигация + рыбалка + бой + stuck recovery
+- [x] detect_hook_mss(): mss вместо ImageGrab (конфликт с pixel bridge)
+- [x] Быстрая детекция истощения через is_fishing флаг
+- [x] Stuck recovery: 9 уровней с эскалацией, сброс только при реальном прогрессе (dist -300)
+- [x] Порог dist < 2400 для остановки на лунку (не останавливается на чужих)
+- [ ] Калибровка координат всех 17 лунок
+- [ ] Полный автономный цикл 30+ мин
 
 ### После Phase 5 [ ]
 - [ ] Telegram-уведомления (старт, итоги цикла, ошибки)

@@ -72,12 +72,19 @@ ROUTE_FILE = os.path.join(os.path.dirname(__file__), "route_holes.json")
 COMBAT_AOE_KEY = '5'           # AoE skill key
 COMBAT_TIMEOUT = 30.0          # max seconds in combat before giving up
 
-# Stuck recovery escalation
+# Stuck recovery escalation — diverse obstacle avoidance
+STUCK_PROGRESS_DIST = 300   # must get this much closer to reset recovery level
+
 RECOVERY_ACTIONS = [
-    ("jump",     lambda: _do_jumps(3)),
-    ("backtrack", lambda: _hold_key_for('s', 1.5)),
-    ("sidestep", lambda: _hold_key_for(random.choice(['a', 'd']), 1.5)),
-    ("random",   lambda: _random_walk(3.0)),
+    ("jump",          lambda: _do_jumps(3)),
+    ("sidestep_L",    lambda: _hold_key_for('a', 2.0)),
+    ("sidestep_R",    lambda: _hold_key_for('d', 2.0)),
+    ("backtrack",     lambda: _hold_key_for('s', 2.0)),
+    ("diagonal_L",    lambda: _diagonal_walk('a', 3.0)),
+    ("diagonal_R",    lambda: _diagonal_walk('d', 3.0)),
+    ("wide_arc_L",    lambda: _wide_arc('a', 4.0)),
+    ("wide_arc_R",    lambda: _wide_arc('d', 4.0)),
+    ("random",        lambda: _random_walk(5.0)),
 ]
 
 
@@ -91,6 +98,26 @@ def _hold_key_for(key, duration):
     pydirectinput.keyDown(key)
     time.sleep(duration)
     pydirectinput.keyUp(key)
+
+
+def _diagonal_walk(side_key, duration):
+    """Walk forward + sideways simultaneously to go around obstacle."""
+    pydirectinput.keyDown('w')
+    pydirectinput.keyDown(side_key)
+    time.sleep(duration * random.uniform(0.8, 1.0))
+    pydirectinput.keyUp(side_key)
+    pydirectinput.keyUp('w')
+
+
+def _wide_arc(side_key, duration):
+    """Sidestep then sprint forward — wide arc around obstacle."""
+    pydirectinput.keyDown(side_key)
+    time.sleep(duration * 0.4)
+    pydirectinput.keyUp(side_key)
+    time.sleep(0.1)
+    pydirectinput.keyDown('w')
+    time.sleep(duration * 0.6)
+    pydirectinput.keyUp('w')
 
 
 def _random_walk(duration):
@@ -250,6 +277,7 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
     pydirectinput.keyDown('shift')
 
     prev_x, prev_y = state.x, state.y
+    best_dist = dist              # track best distance for recovery reset
     stuck_timer = 0.0
     recovery_level = 0
     last_time = time.time()
@@ -288,13 +316,15 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
 
             # Interaction prompt detected — stop and check
             if state.has_interaction:
-                if state.is_fishing and not state.is_swimming:
+                if state.is_fishing and not state.is_swimming and dist < ARRIVAL_DIST * 3:
                     print(f"[NAV] Fishing prompt detected! dist={dist:.0f}")
                     return "fishing"
                 elif state.is_fishing and state.is_swimming:
-                    print(f"[NAV] Fishing hole seen but swimming — keep going")
+                    pass  # swimming — can't fish, keep going
+                elif state.is_fishing:
+                    pass  # too far from target — likely a different hole, keep going
                 else:
-                    print(f"[NAV] Non-fishing interaction, ignoring...")
+                    pass  # non-fishing interaction, ignore
 
             # Arrived?
             if dist < ARRIVAL_DIST:
@@ -327,6 +357,7 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
                         state = read_player_state(sct, monitor)
                         if state:
                             rotate_to_target(state, target_x, target_y)
+                            prev_x, prev_y = state.x, state.y
                         # Resume sprint
                         pydirectinput.keyDown('w')
                         time.sleep(0.05)
@@ -338,8 +369,11 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
                     stuck_timer = 0.0
             else:
                 stuck_timer = 0.0
-                recovery_level = 0
                 prev_x, prev_y = state.x, state.y
+                # Only reset recovery level if we made real progress toward target
+                if dist < (best_dist - STUCK_PROGRESS_DIST):
+                    recovery_level = 0
+                    best_dist = dist
 
             # Log periodically
             if random.random() < 0.1:
@@ -356,7 +390,7 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
 
 # ── Fishing (adapted from legacy/fishing_bot.py) ────────────────────
 
-def fish_one_hole(sct, stop_flag):
+def fish_one_hole(sct, monitor, stop_flag):
     """Fish at current hole until depleted or stopped.
 
     Returns: (fish_caught, casts_made)
@@ -418,6 +452,12 @@ def fish_one_hole(sct, stop_flag):
         time.sleep(0.3)
         press_key(LOOT_KEY)
         time.sleep(random.uniform(*DELAY_AFTER_LOOT))
+
+        # Check if hole is depleted (fishing prompt disappeared)
+        state = read_player_state(sct, monitor)
+        if state and not state.is_fishing:
+            print(f"\n[FISH] Hole depleted! Fish: {fish_caught}, Casts: {casts_made}")
+            break
 
     return fish_caught, casts_made
 
@@ -559,7 +599,7 @@ def main():
         if result == "fishing":
             # Fishing prompt detected — fish_one_hole presses E (cast) itself
             time.sleep(random.uniform(0.3, 0.5))
-            fish, casts = fish_one_hole(sct, stop_flag)
+            fish, casts = fish_one_hole(sct, monitor, stop_flag)
             total_fish += fish
             total_casts += casts
             fished_count += 1
@@ -571,7 +611,7 @@ def main():
             found = look_for_fishing_hole(sct, monitor, stop_flag)
             if found and not stop_flag[0]:
                 time.sleep(random.uniform(0.3, 0.5))
-                fish, casts = fish_one_hole(sct, stop_flag)
+                fish, casts = fish_one_hole(sct, monitor, stop_flag)
                 total_fish += fish
                 total_casts += casts
                 fished_count += 1
