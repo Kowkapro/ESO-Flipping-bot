@@ -28,6 +28,8 @@ CLASS_NAMES = {
     5: "hp_bar",
     6: "xp_popup",
     7: "destination_text",
+    8: "player_icon",
+    9: "waypoint_pin",
 }
 
 TRAIN_RATIO = 0.8

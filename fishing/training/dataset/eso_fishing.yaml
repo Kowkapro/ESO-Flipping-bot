@@ -11,4 +11,6 @@ names:
   5: hp_bar
   6: xp_popup
   7: destination_text
-nc: 8
+  8: player_icon
+  9: waypoint_pin
+nc: 10
