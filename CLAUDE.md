@@ -1,124 +1,56 @@
-# CLAUDE.md — Правила проекта ESO Flipping Bot
+# CLAUDE.md — Project Rules
 
-## О проекте
-ESO Flipping Bot — инструмент для торговли (flipping) и автоматической рыбалки в Elder Scrolls Online на NA (Americas) PC/Mac мегасервере. Аккаунт: @LaffiTOO.
+## #1 DEVELOPMENT WORKFLOW (highest priority, ALWAYS follow)
+RULE: Every feature follows this EXACT sequence. NEVER skip steps.
+1. Implement the feature
+2. Test that it works (run it, verify output)
+3. Ask user to confirm/approve the result
+4. ONLY after user approval: update relevant docs (`FISHING_BOT.md`, `CLAUDE.md`, `ESO_План_Запуска.md`)
+5. Run `/push`
 
-## Язык общения
-- Общаться с пользователем **на русском языке**
-- **Планы, описания задач и объяснения** — всегда **на русском языке**
-- Код, комментарии в коде и git-коммиты — на **английском**
-- Все игровые советы, названия абилок, предметов, локаций и терминов — **на русском языке**, точно как в официальной RU-локализации ESO
+RULE: NEVER make large untested changes. One feature at a time.
+RULE: NEVER run `/push` without completing steps 1-4 above.
+RULE: After completing a milestone, check it off in `ESO_План_Запуска.md`.
+RULE: When discovering a bug/gotcha, add it to KNOWN ISSUES below.
 
-## Главный принцип разработки
-**Разработку ведём пошагово:** добавили новую фичу или механику -> протестировали что она работает -> сделали коммит и push на GitHub. Никаких больших непроверенных изменений.
-- После завершения этапа — **ставить галочки** в `ESO_План_Запуска.md`
-- При обнаружении ошибок — **добавлять их** в секцию "Частые ошибки" ниже
+## LANGUAGE
+- RULE: Speak Russian to the user. Plans, explanations, task descriptions — always in Russian.
+- RULE: Code, code comments, git commits — in English.
+- RULE: ESO game terms (skills, items, locations) — in Russian, official RU localization.
 
-## Фокус проекта
-- Давать и предлагать **только ту информацию, которая необходима для реализации целей**, описанных в `ESO_План_Запуска.md`
-- Не отвлекаться на побочные темы, не относящиеся к flipping, прокачке, подготовке к боту и заработку gold
+## FOCUS
+- RULE: Stay focused on goals in `ESO_План_Запуска.md`. Do NOT suggest unrelated features or topics.
 
-## Структура проекта
-```
-ESO-Flipping-bot/
-├── CLAUDE.md                     # правила проекта
-├── ESO_План_Запуска.md           # мастер-план
-├── config.example.env            # шаблон конфига (без секретов)
-├── requirements.txt              # зависимости Python
-├── .env                          # секреты (НЕ в git)
-│
-├── fishing/                      # ОСНОВНОЙ КОД БОТА
-│   ├── config.py                 # все константы в одном месте
-│   ├── main.py                   # главный бот (YOLO fishing cycle)
-│   ├── yolo_fisher.py            # альтернативный бот (модульный, класс-based)
-│   ├── navigation.py             # навигация (Phase 2-3, Win32 SendInput)
-│   ├── harvestmap_parser.py      # парсер HarvestMap данных
-│   ├── harvestmap_data/          # .lua данные HarvestMap
-│   │
-│   ├── tools/                    # утилиты
-│   │   ├── calibrate.py          # калибровка скорости/мыши
-│   │   ├── route_recorder.py     # запись маршрутов (Phase 2)
-│   │   ├── yolo_live_view.py     # дебаг YOLO в реальном времени
-│   │   └── screenshot_collector.py # сбор скриншотов для обучения
-│   │
-│   ├── training/                 # ML пайплайн
-│   │   ├── train.py              # обучение YOLO модели
-│   │   ├── build_dataset.py      # сборка датасета из CVAT экспортов
-│   │   ├── dataset/              # изображения + разметка
-│   │   ├── exports/              # .zip экспорты из CVAT
-│   │   └── runs/                 # обученные модели (best.pt)
-│   │
-│   ├── tests/                    # тест-скрипты (изолированные тесты фаз)
-│   │   ├── test_compass_steer.py
-│   │   ├── test_map_waypoint.py
-│   │   ├── test_mouse_calibration.py
-│   │   ├── test_run_to_waypoint.py
-│   │   └── test_waypoint_and_turn.py
-│   │
-│   └── legacy/                   # архив старого кода (Phase 1-3)
-│       ├── fishing_bot.py        # Phase 1-3 бот (рабочий, но заменён Phase 4)
-│       ├── fishing_bot_v2.py     # бэкап Phase 1-2
-│       ├── dynamic_navigator.py  # Phase 3 (заморожена)
-│       └── vision_prototype.py   # ранний прототип YOLO
-│
-└── docs/                         # историческая документация
-    ├── PHASE3_PLAN.md
-    └── auto_fishing_plan.md
-```
+## CODE
+- RULE: ALWAYS read a file before modifying it.
+- RULE: Do NOT create new files unless absolutely necessary.
+- RULE: ESO addon files (SavedVariables, PriceTable*.lua) — READ ONLY, never modify.
 
-## Безопасность аккаунта ESO
-- **Никогда** не хранить пароли, токены или ключи API в коде — использовать `.env` или переменные окружения
-- Файл `.env` **всегда** должен быть в `.gitignore`
-- Не коммитить файлы с путями к ESO (`SavedVariables`, `AddOns`) — они содержат имя аккаунта
-- Не коммитить логи с игровыми данными (имена персонажей, гильдии, UID транзакций)
+## YOLO / ML
+- RULE: YOLO retraining — ALWAYS merge ALL previous CVAT exports with new ones, never use only the latest export.
+- RULE: Before rebuilding dataset — verify all classes are present and counts have not decreased vs previous version.
+- RULE: Store all CVAT `.zip` exports in `fishing/training/exports/` as backup.
 
-## Безопасность бота
-- Все действия бота должны имитировать **человеческое поведение**: случайные задержки, непостоянные паттерны
-- Запросы к TamrielTradeCentre и другим внешним сервисам — с **rate limiting** и **случайными интервалами**
-- Не делать более **1 запроса в 3-5 секунд** к TTC API/сайту
-- User-Agent в HTTP-запросах должен выглядеть как обычный браузер
-- Логировать все действия бота локально для отладки, но **не отправлять логи наружу**
+## SECURITY (hard rules, NEVER override)
+- NEVER put secrets (passwords, API keys, tokens) in code — use `.env`
+- NEVER commit: `.env`, `*.pt`, `*.log`, `SavedVariables/`, `PriceTable*.lua`
+- NEVER commit payment data, marketplace accounts, buyer names
+- Bot actions MUST have random delays (human-like behavior)
+- TTC requests: max 1 per 3-5 seconds, browser User-Agent
 
-## Безопасность продаж (RMT)
-- **Никогда** не хранить данные платёжных систем (номера карт, кошельков) в репозитории
-- Не коммитить данные аккаунтов торговых площадок (FunPay, G2G, VirtGold и т.д.)
-- Не упоминать конкретные суммы сделок и имена покупателей в коде или логах
+## GIT
+- Commits: short, English, descriptive
+- `.gitignore` must include: `.env`, `*.log`, `SavedVariables/`, `__pycache__/`, `*.pt`
 
-## Ключевые пути
-- Конфигурация: `.env` (не коммитить) + `config.example.env` (шаблон без секретов)
-- Данные TTC: `d:\Documents\Elder Scrolls Online\live\AddOns\TamrielTradeCentre\`
-- Saved Variables: `d:\Documents\Elder Scrolls Online\live\SavedVariables\`
-- YOLO модель: `fishing/training/runs/eso_fishing/weights/best.pt`
-
-## Правила разработки
-- Перед изменением файла — сначала прочитать его
-- Не создавать файлы без необходимости
-- Не трогать файлы аддонов ESO напрямую (только читать данные из них)
-- При работе с PriceTable*.lua — только парсить, **не модифицировать**
-- Тесты писать для критических модулей (парсинг цен, логика flipping)
-- Аддоны и модификации устанавливать **по одной штуке**, после каждой — проверять работоспособность в игре и отсутствие ошибок в файлах
-
-## YOLO / Машинное обучение
-- При дообучении модели **всегда объединять** все предыдущие экспорты разметки с новыми (merge), а не использовать только последний экспорт
-- CVAT может не содержать данные из удалённых задач — **никогда не полагаться на один экспорт** как на полный датасет
-- Перед пересборкой датасета проверять что все классы присутствуют и их количество не уменьшилось по сравнению с предыдущей версией
-- Хранить все `.zip` экспорты из CVAT в `fishing/training/exports/` как бэкап
-
-## Частые ошибки (запомнить!)
-- **`pydirectinput.moveRel()` не работает с ESO** — использовать Win32 `SendInput` с `MOUSEEVENTF_MOVE`
-- **`pydirectinput.typewrite()` печатает в текущей раскладке** — переключать на EN через `PostMessageW(WM_INPUTLANGCHANGEREQUEST)`
-- **`GetAsyncKeyState` не работает** когда ESO в фокусе — использовать библиотеку `keyboard` (low-level hooks)
-- **SavedVariables не сохраняются автоматически** — только `/reloadui` надёжно сбрасывает на диск (5-8 сек)
-- **ESO кэширует манифесты аддонов** — добавление новых .lua файлов в существующий аддон не работает без переустановки
-- **`GetMapPlayerPosition` heading** = направление персонажа, НЕ камеры — нужен шаг (W) после поворота мыши
-- **Предварительно спланированный маршрут не работает** — игрок двигается, карта центрируется, сохранённые координаты устаревают -> свежий скан каждую итерацию
-- **`mss` библиотека** нельзя использовать из потока keyboard hook — передавать через очередь в основной поток
-- **Ширина маркера компаса не масштабируется** с расстоянием — всегда ~35px, нельзя использовать для определения расстояния
-- **`waypoint_marker` vs `compass_marker`** — модель обучена на `compass_marker`, не путать имена классов
-- **`bubbles` класс слабый** (mAP50=0.359) — не использовать как сигнал прибытия, ложные срабатывания при беге
-
-## Git
-- Убедиться что `.gitignore` содержит: `.env`, `*.log`, `SavedVariables/`, `__pycache__/`, `node_modules/`, `*.pt`
-- Коммиты — короткие и по делу, на английском
-- Не коммитить большие файлы данных (PriceTable*.lua — 5+ МБ)
-- Не коммитить веса моделей (.pt файлы)
+## KNOWN ISSUES
+- `pydirectinput.moveRel()` broken with ESO — use Win32 `SendInput` with `MOUSEEVENTF_MOVE`
+- `pydirectinput.typewrite()` types in current layout — switch to EN via `PostMessageW(WM_INPUTLANGCHANGEREQUEST)`
+- `GetAsyncKeyState` fails when ESO has focus — use `keyboard` library (low-level hooks)
+- SavedVariables only save on `/reloadui` (5-8 sec delay)
+- ESO caches addon manifests — new .lua files need addon reinstall
+- `GetMapPlayerPosition` heading = character direction, NOT camera — need step (W) after mouse turn
+- Pre-planned routes don't work — player moves, map re-centers, saved coords stale -> fresh YOLO scan each iteration
+- `mss` can't run in keyboard hook thread — use queue to main thread
+- Compass marker width always ~35px regardless of distance — can't use for distance estimation
+- Model trained on `compass_marker`, NOT `waypoint_marker` — don't confuse class names
+- `bubbles` class weak (mAP50=0.359) — don't rely on it, false positives while running

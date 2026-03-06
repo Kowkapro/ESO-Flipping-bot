@@ -29,6 +29,9 @@ fishing/training/dataset/train/
 fishing/training/dataset/val/
 fishing/training/dataset/*.cache
 fishing/training/runs/
+fishing/training/screenshots/
+fishing/training/annotation_preview/
+fishing/training/yolo_world_preview/
 
 # Media (large files)
 *.mp4
