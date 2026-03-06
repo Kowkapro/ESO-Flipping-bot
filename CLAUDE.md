@@ -46,11 +46,18 @@ RULE: When discovering a bug/gotcha, add it to KNOWN ISSUES below.
 - `pydirectinput.moveRel()` broken with ESO — use Win32 `SendInput` with `MOUSEEVENTF_MOVE`
 - `pydirectinput.typewrite()` types in current layout — switch to EN via `PostMessageW(WM_INPUTLANGCHANGEREQUEST)`
 - `GetAsyncKeyState` fails when ESO has focus — use `keyboard` library (low-level hooks)
-- SavedVariables only save on `/reloadui` (5-8 sec delay)
+- SavedVariables only save on `/reloadui` (5-8 sec delay) — Pixel Bridge replaces this
+- SavedVariables polling does NOT work for real-time data transfer to external programs
+- `RequestAddOnSavedVariablesPrioritySave` unreliable — ESO may skip saves if write takes too long
 - ESO caches addon manifests — new .lua files need addon reinstall
 - `GetMapPlayerPosition` heading = character direction, NOT camera — need step (W) after mouse turn
+- `GetMapPlayerPosition('reticleover')` disabled since v1.2.3 — anti-bot measure, only "player" works
 - Pre-planned routes don't work — player moves, map re-centers, saved coords stale -> fresh YOLO scan each iteration
+- YOLO nav has architectural issues: pixel distance on map != real distance, OCR too slow for running, compass marker always ~35px
 - `mss` can't run in keyboard hook thread — use queue to main thread
 - Compass marker width always ~35px regardless of distance — can't use for distance estimation
 - Model trained on `compass_marker`, NOT `waypoint_marker` — don't confuse class names
 - `bubbles` class weak (mAP50=0.359) — don't rely on it, false positives while running
+- ESO May 2025 ban wave targeted auto-fishing bots (FishyBot users) — use random delays, human-like behavior
+- DXcam/BetterCam only works in windowed/borderless fullscreen (not exclusive fullscreen)
+- BetterCam `grab()` returns None if frame unchanged — always check for None

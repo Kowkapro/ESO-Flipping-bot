@@ -227,19 +227,43 @@ python fishing/main.py
 - [ ] Разметить compass/fishing/npc/combat (Claude Vision + CVAT)
 - [ ] Дообучить v3 с полным набором данных
 
-### После модели v3 [ ]
-- [ ] Полное тестирование цикла A-D с v3 моделью
+### Phase 5 — Pixel Bridge (навигация по координатам) [СЛЕДУЮЩИЙ ШАГ]
+
+> Детальная документация: [`docs/PIXEL_BRIDGE.md`](../docs/PIXEL_BRIDGE.md)
+
+**Зачем:** Phase 4 (YOLO навигация) имеет архитектурные проблемы — неточные расстояния на карте, пропуск лунок из-за медленного OCR, кружение из-за неточного компаса. Pixel Bridge решает все 3 проблемы.
+
+**Что делает:** ESO аддон рисует RGB-пиксели с координатами/состоянием → Python мгновенно читает → навигация по точным координатам + HarvestMap DB.
+
+**Файлы:**
+- `AddOns/FishingNav/FishingNav.lua` — MODIFY (pixel rendering + events)
+- `fishing/pixel_bridge.py` — CREATE (pixel reader + decoder)
+- `fishing/main_v5.py` — CREATE (new navigation loop)
+
+**Что YOLO всё ещё делает:** только bite detection (белый крючок Votan's)
+
+**Шаги реализации:**
+- [ ] FishingNav addon v2 (pixel bar rendering + event listeners)
+- [ ] pixel_bridge.py (reader + decoder + checksum validation)
+- [ ] main_v5.py (navigation loop: HarvestMap → bearing → sprint → fish)
+- [ ] Stuck detection (coords-based: distance < 5 units over 3 sec)
+- [ ] Тестирование: 1 лунка → 3-5 лунок → полный цикл
+
+### После Phase 5 [ ]
 - [ ] Telegram-уведомления (старт, итоги цикла, ошибки)
 - [ ] Управление инвентарём (что делать когда полный)
 - [ ] Выбор наживки по типу воды
-- [ ] Перезапуск цикла когда все видимые лунки пройдены
 - [ ] Антидетект: случайные паузы, непостоянный темп
 
 ### Потом (улучшения) [ ]
-- [ ] Детекция боя (enemy + hp_bar) -> убить моба или убежать
+- [ ] Behavior Tree (py_trees) — масштабируемая логика при добавлении боя/торговли
+- [ ] VLM error recovery — Claude Vision для диагностики неизвестных ситуаций
+- [ ] Расширение Pixel Bridge для боя (HP, enemies count, target distance)
+- [ ] Детекция боя через YOLO (enemy position on screen) + pixel bridge flags
 - [ ] Автовыбор зоны с речной водой (основной тип для прокачки)
 - [ ] Продажа рыбы NPC-торговцу
 - [ ] Supervisor: автоперезапуск при ошибках
+- [ ] TensorRT export — ускорение YOLO если вернётся в основной pipeline
 
 ---
 
