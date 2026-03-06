@@ -20,7 +20,7 @@ TRAIN_DIR = DATASET_DIR / "train"
 VAL_DIR = DATASET_DIR / "val"
 
 CLASS_NAMES = {
-    0: "blue_hook",
+    0: "red_hook",
     1: "bubbles",
     2: "compass_marker",
     3: "enemy",
@@ -30,6 +30,14 @@ CLASS_NAMES = {
     7: "destination_text",
     8: "player_icon",
     9: "waypoint_pin",
+}
+
+# Remap CVAT export class IDs to dataset class IDs
+# blue_hook (CVAT 0) removed, red_hook (CVAT 10) -> dataset 0
+CLASS_REMAP = {
+    0: None,  # blue_hook -> skip
+    1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9,
+    10: 0,    # red_hook -> 0
 }
 
 TRAIN_RATIO = 0.8
@@ -69,8 +77,15 @@ def merge_exports():
                 if content:
                     for line in content.split("\n"):
                         line = line.strip()
-                        if line:
-                            merged[basename].append(line)
+                        if not line:
+                            continue
+                        parts = line.split()
+                        old_cls = int(parts[0])
+                        new_cls = CLASS_REMAP.get(old_cls)
+                        if new_cls is None:
+                            continue  # skip removed classes
+                        parts[0] = str(new_cls)
+                        merged[basename].append(" ".join(parts))
 
     # Deduplicate lines per image
     result = {}

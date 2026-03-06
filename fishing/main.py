@@ -2,7 +2,7 @@
 Full fishing cycle — open map each time, pick nearest unvisited hook.
 
 Loop:
-1. Open map, zoom, YOLO scan for blue_hooks
+1. Open map, zoom, YOLO scan for red_hooks
 2. Pick nearest unvisited hook to player (center of map)
 3. Set waypoint → turn → sprint → detect arrival
 4. Fish if hole spawned, skip if not
@@ -146,7 +146,8 @@ HOOK_MIN_CONF = 0.2
 HOOK_DEDUP_DIST = 30       # px — hooks closer than this are duplicates
 
 # Visited hook tracking
-VISITED_DEDUP_DIST = 40     # px — if hook is within this dist of a visited one, skip it
+JUST_FISHED_RADIUS = 80     # px — hooks closer than this to center = just fished, skip
+DIRECTION_BONUS_WEIGHT = 0.4  # how much to favor forward direction (0=ignore, 1=strong)
 
 # Mouse calibration (800 DPI, ESO look speed 15)
 PIXELS_PER_360 = 9300
@@ -395,40 +396,103 @@ def deduplicate_hooks(hooks, min_dist=HOOK_DEDUP_DIST):
     return unique
 
 
-def pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, visited):
-    """Open map, YOLO scan, pick nearest unvisited hook, set waypoint.
+def multi_frame_detect(model, sct, monitor, n_frames=3, delay=0.3):
+    """Aggregate detections across multiple frames to reduce flickering misses."""
+    all_detections = []
+    for i in range(n_frames):
+        dets = yolo_detect(model, sct, monitor)
+        all_detections.extend(dets)
+        if i < n_frames - 1:
+            time.sleep(delay)
 
-    visited: list of (dx, dy) offsets from screen center for already-visited hooks.
-    Returns: hook dict with "dx", "dy" keys, or None if no unvisited hooks.
+    # Deduplicate: group nearby detections of same class, keep highest conf
+    merged = []
+    for d in sorted(all_detections, key=lambda x: x["conf"], reverse=True):
+        is_dup = any(
+            m["class"] == d["class"]
+            and abs(m["cx"] - d["cx"]) < HOOK_DEDUP_DIST
+            and abs(m["cy"] - d["cy"]) < HOOK_DEDUP_DIST
+            for m in merged
+        )
+        if not is_dup:
+            merged.append(d)
+    return merged
+
+
+def save_debug_map(frame_bgr, hooks, picked, center_x, center_y, hook_num):
+    """Save annotated map screenshot showing all hooks, distances, and selection."""
+    debug = frame_bgr.copy()
+    # Draw player center crosshair
+    cv2.drawMarker(debug, (center_x, center_y), (0, 255, 0), cv2.MARKER_CROSS, 30, 2)
+    cv2.putText(debug, "PLAYER", (center_x + 15, center_y - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+    for i, h in enumerate(hooks):
+        hx, hy = int(h["cx"]), int(h["cy"])
+        dist = ((hx - center_x)**2 + (hy - center_y)**2) ** 0.5
+        is_picked = (h is picked)
+        color = (0, 255, 255) if is_picked else (0, 0, 255)  # yellow=picked, red=other
+        thickness = 3 if is_picked else 1
+
+        # Line from player to hook
+        cv2.line(debug, (center_x, center_y), (hx, hy), color, thickness)
+        # Circle on hook
+        cv2.circle(debug, (hx, hy), 12, color, thickness)
+        # Label
+        label = f"#{i+1} d={dist:.0f} c={h['conf']:.2f}"
+        if is_picked:
+            label = f">>> {label} <<<"
+        cv2.putText(debug, label, (hx + 15, hy + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+
+    path = os.path.join(os.path.dirname(__file__), f"debug_map_hook{hook_num}.png")
+    cv2.imwrite(path, debug)
+    print(f"[DEBUG] Map saved: {path}")
+
+
+def pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, last_direction):
+    """Open map, YOLO scan, pick nearest hook.
+
+    Uses screen center as player position (ESO map always centers on player).
+    On first hook (last_direction=None): no filtering, pick pure nearest.
+    On subsequent hooks: skip hooks within JUST_FISHED_RADIUS of center
+    (player is standing at the just-fished hole).
+    Multi-frame scan (3 frames) to catch flickering detections.
     """
     screen_cx = screen_w // 2
     screen_cy = screen_h // 2
+    is_first_hook = last_direction is None
 
     print("\n[WP] Opening map to find next hook...")
     open_map_and_zoom(screen_w, screen_h)
 
-    # YOLO scan
-    detections = yolo_detect(model, sct, monitor)
+    # Multi-frame YOLO scan (3 frames to reduce flicker misses)
+    detections = multi_frame_detect(model, sct, monitor, n_frames=3, delay=0.3)
+
+    # Grab last frame for debug screenshot
+    debug_screenshot = sct.grab(monitor)
+    debug_frame = np.array(debug_screenshot)
+    debug_frame_bgr = cv2.cvtColor(debug_frame, cv2.COLOR_BGRA2BGR)
+
     hooks = [
         d for d in detections
-        if d["class"] == "blue_hook" and d["conf"] >= HOOK_MIN_CONF
+        if d["class"] == "red_hook" and d["conf"] >= HOOK_MIN_CONF
     ]
 
-    # Filter out detections near screen center — that's the player icon, not a hook
-    PLAYER_ICON_RADIUS = 60  # px — player icon + nearby UI elements at map center
-    hooks = [h for h in hooks
-             if ((h["cx"] - screen_cx)**2 + (h["cy"] - screen_cy)**2) ** 0.5 > PLAYER_ICON_RADIUS]
+    print(f"[WP] YOLO: {len(hooks)} red_hook total (3-frame merge)")
 
-    # Log all raw detections before filtering
-    print(f"[WP] Raw YOLO: {len(hooks)} blue_hook detections (after player icon filter):")
+    # Only filter near-center hooks on hook 2+ (skip just-fished hole)
+    if not is_first_hook:
+        before = len(hooks)
+        hooks = [h for h in hooks
+                 if ((h["cx"] - screen_cx)**2 + (h["cy"] - screen_cy)**2) ** 0.5 > JUST_FISHED_RADIUS]
+        filtered = before - len(hooks)
+        if filtered:
+            print(f"[WP] Filtered {filtered} hooks within {JUST_FISHED_RADIUS}px of center (just-fished)")
+
     for i, h in enumerate(sorted(hooks, key=lambda h: h["conf"], reverse=True)):
         dist = ((h["cx"] - screen_cx)**2 + (h["cy"] - screen_cy)**2) ** 0.5
         print(f"  #{i+1}: pos=({h['cx']:.0f},{h['cy']:.0f}) conf={h['conf']:.3f} dist={dist:.0f}px")
-
-    # Deduplicate within this scan (sort by confidence first so best detection survives)
-    hooks = sorted(hooks, key=lambda h: h["conf"], reverse=True)
-    hooks = deduplicate_hooks(hooks)
-    print(f"[WP] After dedup: {len(hooks)} hooks")
 
     if not hooks:
         print("[WP] No hooks visible — closing map")
@@ -436,40 +500,44 @@ def pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, visited):
         time.sleep(random.uniform(0.8, 1.2))
         return None
 
-    # Compute offset from screen center (= relative to player position)
+    # Compute offset from screen center (= player position on ESO map)
     for h in hooks:
         h["dx"] = h["cx"] - screen_cx
         h["dy"] = h["cy"] - screen_cy
+        h["dist"] = (h["dx"]**2 + h["dy"]**2) ** 0.5
 
-    # Filter out visited hooks
-    unvisited = []
+    # Sort by pure distance — nearest first
+    hooks.sort(key=lambda h: h["dist"])
+
+    # Score: distance with direction bonus (forward = lower score = preferred)
     for h in hooks:
-        is_visited = any(
-            abs(h["dx"] - vx) < VISITED_DEDUP_DIST and abs(h["dy"] - vy) < VISITED_DEDUP_DIST
-            for vx, vy in visited
-        )
-        if not is_visited:
-            unvisited.append(h)
+        if last_direction and h["dist"] > 0:
+            ld_len = (last_direction[0]**2 + last_direction[1]**2) ** 0.5
+            if ld_len > 0:
+                dot = (h["dx"] * last_direction[0] + h["dy"] * last_direction[1]) / (h["dist"] * ld_len)
+                h["score"] = h["dist"] * (1 - DIRECTION_BONUS_WEIGHT * dot)
+            else:
+                h["score"] = h["dist"]
+        else:
+            h["score"] = h["dist"]
 
-    print(f"[WP] Unvisited: {len(unvisited)} / {len(hooks)}")
-    for i, h in enumerate(sorted(unvisited, key=lambda h: h["dx"]**2 + h["dy"]**2)):
-        dist = (h["dx"]**2 + h["dy"]**2) ** 0.5
-        print(f"  unvisited #{i+1}: offset=({h['dx']:+.0f},{h['dy']:+.0f}) dist={dist:.0f}px conf={h['conf']:.3f}")
+    hooks.sort(key=lambda h: h["score"])
 
-    if not unvisited:
-        print("[WP] All visible hooks already visited — closing map")
-        press_key('m')
-        time.sleep(random.uniform(0.8, 1.2))
-        return None
+    dir_str = f"({last_direction[0]:+.0f},{last_direction[1]:+.0f})" if last_direction else "none"
+    print(f"[WP] Scored hooks (last_dir={dir_str}):")
+    for i, h in enumerate(hooks):
+        print(f"  #{i+1}: offset=({h['dx']:+.0f},{h['dy']:+.0f}) dist={h['dist']:.0f}px score={h['score']:.0f}")
 
-    # Pick nearest to screen center (= nearest to player)
-    nearest = min(unvisited, key=lambda h: h["dx"]**2 + h["dy"]**2)
-    dist_from_center = (nearest["dx"]**2 + nearest["dy"]**2) ** 0.5
-    print(f"[WP] Picking hook at ({nearest['cx']:.0f}, {nearest['cy']:.0f}), "
-          f"offset=({nearest['dx']:+.0f}, {nearest['dy']:+.0f}), "
-          f"dist={dist_from_center:.0f}px, conf={nearest['conf']:.3f}")
+    nearest = hooks[0]
+    print(f"[WP] PICKED hook at ({nearest['cx']:.0f}, {nearest['cy']:.0f}), "
+          f"dist={nearest['dist']:.0f}px, score={nearest['score']:.0f}, conf={nearest['conf']:.3f}")
 
-    # Remove old waypoint first (can't place new one if old exists)
+    # Save debug screenshot
+    hook_num = getattr(pick_and_set_waypoint, '_hook_num', 0) + 1
+    pick_and_set_waypoint._hook_num = hook_num
+    save_debug_map(debug_frame_bgr, hooks, nearest, screen_cx, screen_cy, hook_num)
+
+    # Remove old waypoint first
     press_key(WAYPOINT_KEY)
     time.sleep(random.uniform(0.2, 0.4))
 
@@ -738,7 +806,7 @@ def phase_d_fish(sct, monitor, screen_w, screen_h, stop_flag):
 
 def main():
     model_path = os.path.join(
-        os.path.dirname(__file__), "training", "runs", "eso_fishing_v3", "weights", "best.pt"
+        os.path.dirname(__file__), "training", "runs", "eso_fishing_v4", "weights", "best.pt"
     )
     if not os.path.exists(model_path):
         print(f"[ERROR] Model not found: {model_path}")
@@ -780,7 +848,7 @@ def main():
     time.sleep(0.5)
 
     # ── Route loop — fresh scan each iteration ──
-    visited = []        # list of (dx, dy) offsets from screen center
+    last_direction = None   # (dx, dy) of last movement — used to prefer forward hooks
     total_fish = 0
     total_casts = 0
     fished_count = 0
@@ -792,22 +860,18 @@ def main():
 
         print()
         print("#" * 60)
-        print(f"  HOOK {hook_num}  (visited: {len(visited)})")
+        print(f"  HOOK {hook_num}")
         print("#" * 60)
 
-        # Open map, scan, pick nearest unvisited hook, set waypoint
-        hook = pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, visited)
+        # Open map, scan, pick best hook (direction-aware), set waypoint
+        hook = pick_and_set_waypoint(model, sct, monitor, screen_w, screen_h, last_direction)
 
         if hook is None:
-            print("\n[DONE] No more unvisited hooks visible!")
+            print("\n[DONE] No more hooks visible!")
             break
 
-        # Compensate player movement: after navigating to hook at (dx, dy),
-        # the player shifted by that amount, so all old visited offsets must adjust
-        hook_dx, hook_dy = hook["dx"], hook["dy"]
-        visited = [(vx - hook_dx, vy - hook_dy) for vx, vy in visited]
-        # Mark current hook as visited (now at ~(0,0) since we're heading there)
-        visited.append((0, 0))
+        # Remember direction for next iteration
+        last_direction = (hook["dx"], hook["dy"])
 
         if stop_flag[0]:
             break

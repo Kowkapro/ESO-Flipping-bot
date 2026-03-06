@@ -13,7 +13,7 @@ from ultralytics import YOLO
 
 def main():
     parser = argparse.ArgumentParser(description="Train YOLO on ESO fishing data")
-    parser.add_argument("--model", default="yolo11l.pt", help="Base model (yolo11n/s/m/l/x)")
+    parser.add_argument("--model", default="yolo11s.pt", help="Base model (yolo11n/s/m/l/x)")
     parser.add_argument("--epochs", type=int, default=150, help="Training epochs")
     parser.add_argument("--imgsz", type=int, default=1280, help="Image size")
     parser.add_argument("--batch", type=int, default=2, help="Batch size (2 for 8GB VRAM at 1280)")
@@ -24,7 +24,7 @@ def main():
     data_yaml = os.path.join(os.path.dirname(__file__), "dataset", "eso_fishing.yaml")
 
     print("=" * 50)
-    print("  ESO Fishing — YOLO11 Training (v3)")
+    print("  ESO Fishing — YOLO11 Training (v4)")
     print("=" * 50)
     print(f"  Model:  {args.model}")
     print(f"  Epochs: {args.epochs}")
@@ -35,7 +35,7 @@ def main():
     print()
 
     if args.resume:
-        last_path = os.path.join(os.path.dirname(__file__), "runs", "eso_fishing_v3", "weights", "last.pt")
+        last_path = os.path.join(os.path.dirname(__file__), "runs", "eso_fishing_v4", "weights", "last.pt")
         if os.path.exists(last_path):
             model = YOLO(last_path)
             print(f"Resuming from {last_path}")
@@ -51,7 +51,7 @@ def main():
         imgsz=args.imgsz,
         batch=args.batch,
         project=os.path.join(os.path.dirname(__file__), "runs"),
-        name="eso_fishing_v3",
+        name="eso_fishing_v4",
         exist_ok=True,
         # Augmentation
         hsv_h=0.015,
@@ -70,7 +70,7 @@ def main():
         amp=True,            # Mixed precision for VRAM savings
     )
 
-    best_path = os.path.join(os.path.dirname(__file__), "runs", "eso_fishing_v3", "weights", "best.pt")
+    best_path = os.path.join(os.path.dirname(__file__), "runs", "eso_fishing_v4", "weights", "best.pt")
     print()
     print("=" * 50)
     print(f"Training complete!")
