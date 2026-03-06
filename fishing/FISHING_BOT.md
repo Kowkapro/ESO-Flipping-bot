@@ -243,8 +243,8 @@ python fishing/main.py
 **Что YOLO всё ещё делает:** только bite detection (белый крючок Votan's)
 
 **Шаги реализации:**
-- [ ] FishingNav addon v2 (pixel bar rendering + event listeners)
-- [ ] pixel_bridge.py (reader + decoder + checksum validation)
+- [x] FishingNav addon v2 (CT_BACKDROP pixel blocks + combat event) (06.03.26)
+- [x] pixel_bridge.py (reader + decoder + checksum validation) — 30/30 frames OK
 - [ ] main_v5.py (navigation loop: HarvestMap → bearing → sprint → fish)
 - [ ] Stuck detection (coords-based: distance < 5 units over 3 sec)
 - [ ] Тестирование: 1 лунка → 3-5 лунок → полный цикл
