@@ -43,6 +43,12 @@ from main import (
     PIXELS_PER_360,
 )
 
+# Disconnect recovery
+DISCONNECT_TIMEOUT = 15.0       # seconds of bridge failure → disconnect
+DISCONNECT_MAX_RETRIES = 3      # max reconnect attempts before giving up
+BTN_VOITI = (960, 490)          # "ВОЙТИ" button (login screen, 1920x1080)
+BTN_IGRAT = (960, 1050)         # "ИГРАТЬ" button (character select, 1920x1080)
+
 # Fishing constants (from legacy/fishing_bot.py)
 CAST_KEY = 'e'
 LOOT_KEY = 'r'
@@ -61,7 +67,10 @@ HOOK_WHITE_RATIO = 0.08
 
 
 # ── Navigation constants ────────────────────────────────────────────
-ARRIVAL_DIST = 800          # world units — stop sprinting
+ARRIVAL_DIST = 800          # world units — stop sprinting, start fine positioning
+FINE_DIST = 200             # world units — close enough, stop fine positioning
+FINE_STEP_DURATION = 0.12   # seconds per WASD tap during fine positioning
+FINE_TIMEOUT = 15.0         # max seconds in fine positioning before giving up
 COURSE_CORRECTION_INTERVAL = 0.1  # seconds between heading checks
 HEADING_DEADZONE = 0.05     # radians (~3°) — don't correct smaller errors
 STUCK_TIMEOUT = 3.0         # seconds without movement = stuck
@@ -120,11 +129,68 @@ def _wide_arc(side_key, duration):
     pydirectinput.keyUp('w')
 
 
+def _jump_forward():
+    """Jump while walking forward — clears small obstacles."""
+    pydirectinput.keyDown('w')
+    time.sleep(0.1)
+    press_key('space')
+    time.sleep(0.5)
+    pydirectinput.keyUp('w')
+
+
 def _random_walk(duration):
     key = random.choice(['w', 'a', 's', 'd'])
     pydirectinput.keyDown(key)
     time.sleep(duration * random.uniform(0.7, 1.0))
     pydirectinput.keyUp(key)
+
+
+# ── Disconnect recovery ──────────────────────────────────────────────
+
+def handle_disconnect(sct, monitor):
+    """Handle ESO disconnect: close error → login → select character → load.
+
+    Flow (from screenshots):
+      1. Error popup "ОШИБКА" with [Alt] OK → press Alt
+      2. Click "ВОЙТИ" button (center screen) → wait for server load
+      3. Click "ИГРАТЬ" button (bottom center) → wait for world load
+      4. Wait for pixel bridge to become available
+    """
+    print("\n" + "!" * 60)
+    print("  DISCONNECT DETECTED — starting reconnect...")
+    print("!" * 60)
+
+    # Step 1: Close error popup
+    print("[RECONNECT] Step 1/4: Closing error popup (Alt)...")
+    time.sleep(random.uniform(1.0, 2.0))
+    press_key('alt')
+    time.sleep(random.uniform(1.5, 2.5))
+
+    # Step 2: Click "ВОЙТИ"
+    print("[RECONNECT] Step 2/4: Clicking 'ВОЙТИ'...")
+    pyautogui.click(*BTN_VOITI)
+    wait = random.uniform(18, 25)
+    print(f"[RECONNECT] Waiting {wait:.0f}s for server load...")
+    time.sleep(wait)
+
+    # Step 3: Click "ИГРАТЬ"
+    print("[RECONNECT] Step 3/4: Clicking 'ИГРАТЬ'...")
+    pyautogui.click(*BTN_IGRAT)
+    wait = random.uniform(12, 18)
+    print(f"[RECONNECT] Waiting {wait:.0f}s for world load...")
+    time.sleep(wait)
+
+    # Step 4: Wait for pixel bridge
+    print("[RECONNECT] Step 4/4: Waiting for pixel bridge...")
+    for i in range(30):
+        state = read_player_state(sct, monitor)
+        if state:
+            print(f"[RECONNECT] SUCCESS! Player at ({state.x:.0f}, {state.y:.0f})")
+            return True
+        time.sleep(1.0)
+
+    print("[RECONNECT] FAILED — pixel bridge not available after 30s")
+    return False
 
 
 # ── Combat ───────────────────────────────────────────────────────────
@@ -281,6 +347,7 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
     stuck_timer = 0.0
     recovery_level = 0
     last_time = time.time()
+    bridge_fail_start = None      # track consecutive bridge failures
 
     try:
         while not stop_flag[0]:
@@ -291,7 +358,12 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
 
             state = read_player_state(sct, monitor)
             if not state:
+                if bridge_fail_start is None:
+                    bridge_fail_start = time.time()
+                elif time.time() - bridge_fail_start > DISCONNECT_TIMEOUT:
+                    return "disconnect"
                 continue
+            bridge_fail_start = None  # reset on success
 
             dist = distance(state.x, state.y, target_x, target_y)
 
@@ -314,19 +386,7 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
                 stuck_timer = 0.0
                 continue
 
-            # Interaction prompt detected — stop and check
-            if state.has_interaction:
-                if state.is_fishing and not state.is_swimming and dist < ARRIVAL_DIST * 3:
-                    print(f"[NAV] Fishing prompt detected! dist={dist:.0f}")
-                    return "fishing"
-                elif state.is_fishing and state.is_swimming:
-                    pass  # swimming — can't fish, keep going
-                elif state.is_fishing:
-                    pass  # too far from target — likely a different hole, keep going
-                else:
-                    pass  # non-fishing interaction, ignore
-
-            # Arrived?
+            # Arrived? — switch to fine positioning
             if dist < ARRIVAL_DIST:
                 print(f"[NAV] Arrived! dist={dist:.0f}")
                 return "arrived"
@@ -386,6 +446,89 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
         pydirectinput.keyUp('shift')
 
     return "stopped"
+
+
+# ── Fine positioning ─────────────────────────────────────────────────
+
+def fine_position(target_x, target_y, sct, monitor, stop_flag):
+    """Walk to exact target coordinates using small WASD taps.
+
+    After sprinting gets us within ARRIVAL_DIST, this function uses
+    short key taps to position precisely on the recorded coordinates.
+
+    Returns: True if positioned within FINE_DIST, False if timeout/stopped.
+    """
+    FINE_RECOVERY = [
+        ("jump_fwd",    lambda: _jump_forward()),
+        ("back+jump",   lambda: (_hold_key_for('s', 1.0), _jump_forward())),
+        ("sidestep_L",  lambda: _diagonal_walk('a', 1.5)),
+        ("jump_L",      lambda: (_hold_key_for('a', 0.5), _jump_forward())),
+        ("back_R",      lambda: (_hold_key_for('s', 0.8), _hold_key_for('d', 1.0))),
+        ("sidestep_R",  lambda: _diagonal_walk('d', 1.5)),
+        ("jump_R",      lambda: (_hold_key_for('d', 0.5), _jump_forward())),
+        ("back_L",      lambda: (_hold_key_for('s', 0.8), _hold_key_for('a', 1.0))),
+        ("wide_L",      lambda: (_hold_key_for('s', 1.5), _diagonal_walk('a', 2.0))),
+        ("wide_R",      lambda: (_hold_key_for('s', 1.5), _diagonal_walk('d', 2.0))),
+        ("back+jump_L", lambda: (_hold_key_for('s', 1.0), _hold_key_for('a', 0.5), _jump_forward())),
+        ("back+jump_R", lambda: (_hold_key_for('s', 1.0), _hold_key_for('d', 0.5), _jump_forward())),
+    ]
+
+    print(f"[FINE] Fine positioning to ({target_x:.0f}, {target_y:.0f})...")
+    prev_dist = float('inf')
+    no_progress_count = 0
+    recovery_idx = 0
+
+    while not stop_flag[0]:
+        state = read_player_state(sct, monitor)
+        if not state:
+            time.sleep(0.2)
+            continue
+
+        dist = distance(state.x, state.y, target_x, target_y)
+        if dist < FINE_DIST:
+            print(f"[FINE] Positioned! dist={dist:.0f}")
+            return True
+
+        # Stuck detection — cycle through recovery actions, never give up
+        if dist >= prev_dist - 20:
+            no_progress_count += 1
+            if no_progress_count >= 3:
+                name, action = FINE_RECOVERY[recovery_idx % len(FINE_RECOVERY)]
+                print(f"[FINE] Stuck at dist={dist:.0f} — {name}")
+                action()
+                time.sleep(0.2)
+                recovery_idx += 1
+                no_progress_count = 0
+                prev_dist = float('inf')
+                continue
+        else:
+            no_progress_count = 0
+            if dist < prev_dist - 50:
+                recovery_idx = 0  # making progress, reset recovery
+        prev_dist = dist
+
+        # Turn to face target
+        target_bearing = bearing_to(state.x, state.y, target_x, target_y)
+        turn = normalize_angle(target_bearing - state.heading)
+        mouse_px = int(angle_to_mouse_px(turn))
+
+        if abs(mouse_px) > 10:
+            steer_smooth(int(mouse_px * 0.7))
+            time.sleep(0.1)
+
+        # Small step forward (W tap) — shorter step when closer
+        step_dur = FINE_STEP_DURATION * min(1.0, dist / ARRIVAL_DIST)
+        step_dur = max(0.05, step_dur)
+        pydirectinput.keyDown('w')
+        time.sleep(step_dur)
+        pydirectinput.keyUp('w')
+        time.sleep(0.15)
+
+        # Log
+        if random.random() < 0.3:
+            print(f"  [FINE] dist={dist:.0f}, step={step_dur:.2f}s")
+
+    return False
 
 
 # ── Fishing (adapted from legacy/fishing_bot.py) ────────────────────
@@ -564,8 +707,10 @@ def main():
     total_casts = 0
     fished_count = 0
     skipped_count = 0
+    reconnect_count = 0
     lap = 1
     idx = best_idx
+    bridge_fail_start = None      # track bridge failures in main loop
 
     while not stop_flag[0]:
         hole = holes[idx]
@@ -578,9 +723,28 @@ def main():
         # Read current position
         state = read_player_state(sct, monitor)
         if not state:
-            print("[WAIT] Pixel bridge not available, waiting...")
+            # Track bridge failures for disconnect detection
+            if bridge_fail_start is None:
+                bridge_fail_start = time.time()
+                print("[WAIT] Pixel bridge not available, waiting...")
+            elif time.time() - bridge_fail_start > DISCONNECT_TIMEOUT:
+                # Disconnect detected — attempt reconnect
+                bridge_fail_start = None
+                ok = False
+                for attempt in range(1, DISCONNECT_MAX_RETRIES + 1):
+                    print(f"[RECONNECT] Attempt {attempt}/{DISCONNECT_MAX_RETRIES}")
+                    if handle_disconnect(sct, monitor):
+                        ok = True
+                        reconnect_count += 1
+                        break
+                    print(f"[RECONNECT] Attempt {attempt} failed, retrying...")
+                if not ok:
+                    print("[RECONNECT] All attempts failed — stopping bot")
+                    break
+                continue  # re-read state and resume from current hole
             time.sleep(1.0)
             continue
+        bridge_fail_start = None  # reset on success
 
         dist = distance(state.x, state.y, hole["x"], hole["y"])
         print(f"[HOLE] Target: ({hole['x']}, {hole['y']}), dist={dist:.0f}")
@@ -595,18 +759,21 @@ def main():
         if stop_flag[0]:
             break
 
-        # Handle result
-        if result == "fishing":
-            # Fishing prompt detected — fish_one_hole presses E (cast) itself
-            time.sleep(random.uniform(0.3, 0.5))
-            fish, casts = fish_one_hole(sct, monitor, stop_flag)
-            total_fish += fish
-            total_casts += casts
-            fished_count += 1
-            print(f"[DONE] {hole_label}: caught {fish} fish")
+        # Handle disconnect during navigation
+        if result == "disconnect":
+            bridge_fail_start = time.time() - DISCONNECT_TIMEOUT  # trigger reconnect on next iteration
+            continue
 
-        elif result == "arrived":
-            # At the coordinates but no prompt seen — look around
+        # Handle result
+        if result == "arrived":
+            # Fine positioning — walk precisely to recorded coordinates
+            time.sleep(random.uniform(0.2, 0.4))
+            fine_position(hole["x"], hole["y"], sct, monitor, stop_flag)
+
+            if stop_flag[0]:
+                break
+
+            # Now look for fishing prompt
             time.sleep(random.uniform(0.3, 0.5))
             found = look_for_fishing_hole(sct, monitor, stop_flag)
             if found and not stop_flag[0]:
@@ -647,6 +814,7 @@ def main():
     print(f"  Skipped: {skipped_count}")
     print(f"  Total fish caught: {total_fish}")
     print(f"  Total casts: {total_casts}")
+    print(f"  Reconnects: {reconnect_count}")
     print("=" * 60)
 
     keyboard.unhook_all()
