@@ -227,27 +227,46 @@ python fishing/main.py
 - [ ] Разметить compass/fishing/npc/combat (Claude Vision + CVAT)
 - [ ] Дообучить v3 с полным набором данных
 
-### Phase 5 — Pixel Bridge (навигация по координатам) [СЛЕДУЮЩИЙ ШАГ]
+### Phase 5 — Pixel Bridge (навигация по координатам) [В РАБОТЕ]
 
 > Детальная документация: [`docs/PIXEL_BRIDGE.md`](../docs/PIXEL_BRIDGE.md)
 
 **Зачем:** Phase 4 (YOLO навигация) имеет архитектурные проблемы — неточные расстояния на карте, пропуск лунок из-за медленного OCR, кружение из-за неточного компаса. Pixel Bridge решает все 3 проблемы.
 
-**Что делает:** ESO аддон рисует RGB-пиксели с координатами/состоянием → Python мгновенно читает → навигация по точным координатам + HarvestMap DB.
+**Что делает:** ESO аддон рисует RGB-пиксели с координатами/состоянием → Python мгновенно читает → навигация по точным координатам.
 
 **Файлы:**
-- `AddOns/FishingNav/FishingNav.lua` — MODIFY (pixel rendering + events)
-- `fishing/pixel_bridge.py` — CREATE (pixel reader + decoder)
-- `fishing/main_v5.py` — CREATE (new navigation loop)
+- `AddOns/FishingNav/FishingNav.lua` — аддон v2 (pixel rendering + `GetGameCameraInteractableActionInfo`)
+- `fishing/pixel_bridge.py` — pixel reader + decoder + PlayerState dataclass
+- `fishing/main_v5.py` — навигационный бот (route-based)
+- `fishing/route_holes.json` — 17 вручную записанных лунок (Glenumbra, речные)
+
+**Архитектура main_v5:**
+1. Загрузка маршрута из `route_holes.json` (17 лунок)
+2. Старт с ближайшей лунки
+3. Навигация: bearing_to → rotate_to_target → sprint с коррекцией каждые 100мс
+4. Детекция промпта через pixel bridge: `is_fishing` (аддон проверяет "рыбалк" в interactableName)
+5. При `is_fishing=True` → стоп → E → phase_d_fish
+6. При `arrived` без промпта → look_for_fishing_hole (360° поворот по 30°)
+7. Циклический обход: 1→2→...→17→1
 
 **Что YOLO всё ещё делает:** только bite detection (белый крючок Votan's)
+
+**ESO координатная система (реверс-инженерия):**
+- Heading 0 = North (Y-), CCW: 90°=West, 180°=South, 270°=East
+- bearing = `atan2(-dx, -dy)`, mouse = `-angle / (2π) * PIXELS_PER_360`
 
 **Шаги реализации:**
 - [x] FishingNav addon v2 (CT_BACKDROP pixel blocks + combat event) (06.03.26)
 - [x] pixel_bridge.py (reader + decoder + checksum validation) — 30/30 frames OK
-- [ ] main_v5.py (navigation loop: HarvestMap → bearing → sprint → fish)
-- [ ] Stuck detection (coords-based: distance < 5 units over 3 sec)
-- [ ] Тестирование: 1 лунка → 3-5 лунок → полный цикл
+- [x] Навигация работает: bearing верный, dist 10K→400, arrived!
+- [x] Stuck detection с эскалацией (jump → backtrack → sidestep → random → skip)
+- [x] 17 лунок записаны вручную (route recorder с debounce)
+- [x] main_v5.py: sequential cyclic route, nearest-start
+- [x] Аддон: `GetGameCameraInteractableActionInfo()` + фильтр "рыбалк" для is_fishing
+- [x] Фикс: `pixelBridgeReady` guard для /reloadui (duplicate name error)
+- [ ] **>>> ТЕСТИРОВАНИЕ: is_fishing детекция + phase_d_fish запуск <<<**
+- [ ] Полный цикл: навигация → детекция → рыбалка → следующая лунка
 
 ### После Phase 5 [ ]
 - [ ] Telegram-уведомления (старт, итоги цикла, ошибки)

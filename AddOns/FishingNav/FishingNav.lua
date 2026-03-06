@@ -19,6 +19,7 @@ local flags = {
     hasInteraction = false,
     isFishing = false,
     reticleHidden = false,
+    isSwimming = false,
 }
 
 local function CreatePixelBlocks()
@@ -51,10 +52,12 @@ local function PixelUpdate()
     local _, worldX, _, worldY = GetUnitRawWorldPosition("player")
     local _, _, heading = GetMapPlayerPosition("player")
 
-    -- Poll interaction state every frame (no reliable event for all cases)
-    flags.hasInteraction = DoesUnitExist("reticleover")
-    flags.isFishing = (GetInteractionType() == INTERACTION_FISH)
+    -- Poll interaction state every frame
+    local _, interactableName = GetGameCameraInteractableActionInfo()
+    flags.hasInteraction = (interactableName ~= nil and interactableName ~= "")
+    flags.isFishing = (interactableName ~= nil and string.find(interactableName, "рыбалк") ~= nil)
     flags.reticleHidden = IsReticleHidden()
+    flags.isSwimming = IsUnitSwimming("player")
 
     -- Encode worldX as 3 bytes (0 — 16,777,215)
     local xInt = math.floor(worldX)
@@ -78,6 +81,7 @@ local function PixelUpdate()
                    + (flags.hasInteraction and 2 or 0)
                    + (flags.isFishing and 4 or 0)
                    + (flags.reticleHidden and 8 or 0)
+                   + (flags.isSwimming and 16 or 0)
 
     -- Checksum: XOR of all 9 data bytes (blocks 1-3)
     local checksum = BitXor(xH, BitXor(xM, BitXor(xL,
@@ -128,8 +132,10 @@ local function OnCombatState(_, inCombat)
 end
 
 local function OnPlayerActivated()
-    -- Pixel bridge
-    CreatePixelBlocks()
+    -- Pixel bridge (only create once — OnPlayerActivated fires on /reloadui too)
+    if not pixelBridgeReady then
+        CreatePixelBlocks()
+    end
     EVENT_MANAGER:RegisterForUpdate(ADDON_NAME .. "_Pixels", 0, PixelUpdate)
 
     -- SavedVariables (legacy, every 500ms)

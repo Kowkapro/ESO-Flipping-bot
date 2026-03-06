@@ -77,9 +77,13 @@
 > Детальная документация: [`docs/PIXEL_BRIDGE.md`](docs/PIXEL_BRIDGE.md)
 - [x] FishingNav addon v2 (пиксельная полоска с координатами + события) (06.03.26)
 - [x] pixel_bridge.py (чтение + декодирование пикселей) — протестировано, 30/30 checksum OK
-- [ ] main_v5.py (навигация по HarvestMap координатам + bearing)
-- [ ] Stuck detection (координаты не меняются 3 сек → recovery)
-- [ ] **Тестирование: навигация к 1 лунке → 3-5 лунок → полный цикл**
+- [x] Навигация работает: bearing_to + angle_to_mouse_px (ESO CCW heading), dist 10K→400
+- [x] Stuck detection (координаты не меняются 3 сек → jump/backtrack/sidestep/random)
+- [x] Маршрут из 17 лунок записан вручную → `fishing/route_holes.json`
+- [x] main_v5.py: последовательный обход маршрута (циклический), старт с ближайшей лунки
+- [x] Аддон: `GetGameCameraInteractableActionInfo()` для детекции промпта + фильтр "рыбалк"
+- [ ] **>>> ТЕКУЩИЙ ЭТАП: тестирование детекции лунки (is_fishing флаг) + запуск рыбалки <<<**
+- [ ] Полный цикл: навигация → детекция промпта → E → phase_d_fish → следующая лунка
 
 ---
 

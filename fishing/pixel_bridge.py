@@ -17,6 +17,7 @@ class PlayerState:
     has_interaction: bool
     is_fishing: bool
     reticle_hidden: bool
+    is_swimming: bool
 
 
 # Center pixel of each 8x8 block: (x, y) offsets from top-left
@@ -75,6 +76,7 @@ def read_player_state(sct: mss.mss, monitor: dict) -> PlayerState | None:
         has_interaction=bool(flags & 2),
         is_fishing=bool(flags & 4),
         reticle_hidden=bool(flags & 8),
+        is_swimming=bool(flags & 16),
     )
 
 
@@ -94,7 +96,7 @@ if __name__ == "__main__":
                     f"X={state.x:.0f} Y={state.y:.0f} "
                     f"H={math.degrees(state.heading):.1f}\u00b0 "
                     f"combat={state.in_combat} interact={state.has_interaction} "
-                    f"fish={state.is_fishing} reticle={state.reticle_hidden} "
+                    f"fish={state.is_fishing} swim={state.is_swimming} reticle={state.reticle_hidden} "
                     f"[ok:{detected} miss:{missed}]",
                     flush=True,
                 )
