@@ -34,6 +34,12 @@ fishing/training/annotations/
 fishing/training/annotation_preview/
 fishing/training/yolo_world_preview/
 
+# YOLO runs (validation results)
+runs/
+
+# Debug screenshots
+fishing/debug_*.png
+
 # Media (large files)
 *.mp4
 *.avi

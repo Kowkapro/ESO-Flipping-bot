@@ -79,6 +79,8 @@ ROUTE_FILE = os.path.join(os.path.dirname(__file__), "route_holes.json")
 
 # Combat
 COMBAT_AOE_KEY = '5'           # AoE skill key
+COMBAT_INVIS_KEY = '4'         # Invisibility skill key (flee)
+COMBAT_MAX_PRESSES = 10        # max AoE presses before fleeing
 COMBAT_TIMEOUT = 30.0          # max seconds in combat before giving up
 
 # Stuck recovery escalation — diverse obstacle avoidance
@@ -196,20 +198,34 @@ def handle_disconnect(sct, monitor):
 # ── Combat ───────────────────────────────────────────────────────────
 
 def handle_combat(sct, monitor, stop_flag):
-    """Spam AoE skill until combat ends. Returns True if combat resolved."""
+    """Spam AoE skill until combat ends. Returns 'killed' | 'fled' | 'timeout'."""
     print(f"[COMBAT] Enemy detected! Spamming AoE (key '{COMBAT_AOE_KEY}')...")
+    presses = 0
     start = time.time()
     while not stop_flag[0]:
         if time.time() - start > COMBAT_TIMEOUT:
-            print("[COMBAT] Timeout — giving up")
-            return False
+            print("[COMBAT] Timeout — fleeing")
+            _flee_combat()
+            return "fled"
         state = read_player_state(sct, monitor)
         if state and not state.in_combat:
-            print("[COMBAT] Combat over!")
-            return True
+            print("[COMBAT] Combat over — enemy killed!")
+            return "killed"
         press_key(COMBAT_AOE_KEY)
+        presses += 1
+        if presses >= COMBAT_MAX_PRESSES:
+            print(f"[COMBAT] {presses} AoE presses, mob still alive — fleeing!")
+            _flee_combat()
+            return "fled"
         time.sleep(random.uniform(0.4, 0.7))
-    return False
+    return "timeout"
+
+
+def _flee_combat():
+    """Press invisibility to disengage. Navigation loop will walk to target."""
+    press_key(COMBAT_INVIS_KEY)
+    time.sleep(0.3)
+    print("[COMBAT] Fled (invis) — walking to target without sprint")
 
 
 # ── Hook detection (mss-based, replaces ImageGrab) ──────────────────
@@ -367,12 +383,12 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
 
             dist = distance(state.x, state.y, target_x, target_y)
 
-            # Combat check — stop sprinting, fight, resume
+            # Combat check — stop sprinting, fight or flee, resume
             if state.in_combat:
                 pydirectinput.keyUp('w')
                 pydirectinput.keyUp('shift')
                 time.sleep(0.1)
-                handle_combat(sct, monitor, stop_flag)
+                result = handle_combat(sct, monitor, stop_flag)
                 if stop_flag[0]:
                     return "stopped"
                 # Re-orient and resume sprint
@@ -381,7 +397,8 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
                     rotate_to_target(state, target_x, target_y)
                 pydirectinput.keyDown('w')
                 time.sleep(0.05)
-                pydirectinput.keyDown('shift')
+                if result == "killed":
+                    pydirectinput.keyDown('shift')
                 prev_x, prev_y = state.x if state else prev_x, state.y if state else prev_y
                 stuck_timer = 0.0
                 continue

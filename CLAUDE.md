@@ -61,5 +61,5 @@ RULE: When discovering a bug/gotcha, add it to KNOWN ISSUES below.
 - ESO May 2025 ban wave targeted auto-fishing bots (FishyBot users) — use random delays, human-like behavior
 - DXcam/BetterCam only works in windowed/borderless fullscreen (not exclusive fullscreen)
 - BetterCam `grab()` returns None if frame unchanged — always check for None
-- Combat loop: if mob too strong for AoE '5', `handle_combat` timeout loops forever — need flee or death detection
+- Combat loop: if mob too strong for AoE '5', bot flees via invis key '4' after 10 presses or timeout (was: infinite loop)
 - ESO disconnect screens: error popup [Alt]OK → "ВОЙТИ" button (960,490) → "ИГРАТЬ" button (960,1050) on 1920x1080
