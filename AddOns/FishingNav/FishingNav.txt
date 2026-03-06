@@ -1,0 +1,8 @@
+## Title: FishingNav
+## Author: LaffiTOO
+## APIVersion: 101047
+## Version: 2.0
+## Description: Pixel bridge (RGB blocks) + SavedVariables for fishing bot navigation
+## SavedVariables: FishingNav_Data
+
+FishingNav.lua
