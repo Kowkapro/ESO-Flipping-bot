@@ -26,6 +26,12 @@ RULE: When discovering a bug/gotcha, add it to KNOWN ISSUES below.
 - RULE: Do NOT create new files unless absolutely necessary.
 - RULE: ESO addon files (SavedVariables, PriceTable*.lua) — READ ONLY, never modify.
 
+## NAVIGATION (hard rules)
+- RULE: NEVER skip fishing holes. All 17 route holes are reachable — no exceptions.
+- RULE: Stuck recovery MUST loop forever (random actions) until the bot gets unstuck. There is no place in ESO where you can get permanently stuck.
+- RULE: Primary stuck recovery = jumping in all directions (forward, back, left, right, diagonal). Jumping clears rocks, ledges, and terrain obstacles.
+- RULE: Sprint (shift) breaks invisibility — NEVER sprint after using invis flee. Walk only until combat drops.
+
 ## YOLO / ML
 - RULE: YOLO retraining — ALWAYS merge ALL previous CVAT exports with new ones, never use only the latest export.
 - RULE: Before rebuilding dataset — verify all classes are present and counts have not decreased vs previous version.

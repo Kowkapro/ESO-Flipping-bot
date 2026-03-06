@@ -20,6 +20,7 @@ local flags = {
     isFishing = false,
     reticleHidden = false,
     isSwimming = false,
+    isHidden = false,
 }
 
 local function CreatePixelBlocks()
@@ -58,6 +59,8 @@ local function PixelUpdate()
     flags.isFishing = (interactableName ~= nil and string.find(interactableName, "рыбалк") ~= nil)
     flags.reticleHidden = IsReticleHidden()
     flags.isSwimming = IsUnitSwimming("player")
+    flags.isHidden = (GetUnitStealthState("player") == STEALTH_STATE_HIDDEN or
+                      GetUnitStealthState("player") == STEALTH_STATE_HIDDEN_ALMOST_DETECTED)
 
     -- Encode worldX as 3 bytes (0 — 16,777,215)
     local xInt = math.floor(worldX)
@@ -82,6 +85,7 @@ local function PixelUpdate()
                    + (flags.isFishing and 4 or 0)
                    + (flags.reticleHidden and 8 or 0)
                    + (flags.isSwimming and 16 or 0)
+                   + (flags.isHidden and 32 or 0)
 
     -- Checksum: XOR of all 9 data bytes (blocks 1-3)
     local checksum = BitXor(xH, BitXor(xM, BitXor(xL,

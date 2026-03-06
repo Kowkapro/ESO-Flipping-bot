@@ -73,27 +73,27 @@
 - [x] Тестирование: 5-6 прогонов выявили архитектурные проблемы (неточные расстояния на карте, пропуск лунок, кружение)
 - Заморожена: заменяется Phase 5 (Pixel Bridge). Код сохранён в `fishing/main.py`
 
-### Phase 5 — Pixel Bridge (навигация по координатам) [В РАБОТЕ]
+### Phase 5 — Pixel Bridge (навигация по координатам) [ФИНАЛЬНЫЕ ТЕСТЫ]
 > Детальная документация: [`docs/PIXEL_BRIDGE.md`](docs/PIXEL_BRIDGE.md)
 - [x] FishingNav addon v2 (пиксельная полоска с координатами + события) (06.03.26)
 - [x] pixel_bridge.py (чтение + декодирование пикселей) — протестировано, 30/30 checksum OK
 - [x] Навигация работает: bearing_to + angle_to_mouse_px (ESO CCW heading), dist 10K→400
-- [x] Stuck detection: 9 уровней (jump → sidestep L/R → backtrack → diagonal → wide arc → random → skip)
+- [x] Stuck recovery: 12 рандомных действий (jump в 4 стороны, sidestep, diagonal, wide arc), **бесконечный** — лунки не пропускаются
 - [x] Маршрут из 17 лунок → `fishing/route_holes.json`
 - [x] main_v5.py: последовательный обход маршрута (циклический), старт с ближайшей лунки
 - [x] Аддон: `GetGameCameraInteractableActionInfo()` + фильтр "рыбалк" + `IsUnitSwimming`
 - [x] Рыбалка: `detect_hook_mss()` (mss вместо ImageGrab), полный цикл cast→bite→reel→loot
 - [x] Быстрая детекция истощения лунки через `is_fishing` флаг (вместо 2x45с таймаут)
-- [x] Бой: AoE скил '5' по `in_combat` флагу, автовозврат к навигации
+- [x] Бой: AoE скил '5' (15 ударов) по `in_combat` флагу, автовозврат к навигации
 - [x] Игнорирование лунок при плавании (`is_swimming`)
 - [x] Игнорирование лунок далеко от цели (dist > 2400) — не останавливается на чужих лунках
 - [x] Fine positioning: мини-шаги WASD для точного позиционирования на координатах (dist 800→<200)
-- [x] Fine positioning stuck recovery: 12 diverse actions (jump, sidestep, back+jump, wide arc), без сдачи
+- [x] Fine positioning stuck recovery: 12 diverse actions, бесконечный цикл
 - [x] Disconnect recovery: автореконнект (Alt→ВОЙТИ→ИГРАТЬ→pixel bridge) — **не тестирован**
 - [x] Убрано раннее срабатывание на промпт рыбалки при плавании/беге
-- [x] Combat flee: после 10 AoE-нажатий или таймаута — инвиз (клавиша '4') и уход без спринта
-- [ ] **>>> ТЕКУЩИЙ ЭТАП: тестирование полного маршрута 17 лунок <<<**
-- [ ] Калибровка координат всех 17 лунок
+- [x] Combat flee: после 15 AoE → инвиз ('4') → ходьба без спринта (спринт ломает инвиз)
+- [x] `isHidden` флаг: `GetUnitStealthState` → pixel bridge → авто-переприменение инвиза (кулдаун 3 сек)
+- [ ] **>>> ТЕКУЩИЙ ЭТАП: финальные тесты полного маршрута 17 лунок <<<**
 - [ ] Death detection (`IsUnitDead("player")` в pixel bridge)
 - [ ] Тестирование disconnect recovery в реальных условиях
 

@@ -22,7 +22,8 @@ ESO Client                              Python Bot
 | - hasInteraction flag   |           |                           |
 | - isFishing flag        |           | main_v5.py                |
 | - isSwimming flag       |           | - 17 holes from JSON route|
-| - isReticleHidden flag  |           | - calc bearing + distance |
+| - isHidden flag         |           | - calc bearing + distance |
+| - isReticleHidden flag  |           |                           |
 |                         |           | - rotate + sprint         |
 | Renders 5 colored       |           | - stop when dist < 800    |
 | 8x8px blocks at (0,0)   |           | - fish when addon signals |
@@ -69,7 +70,8 @@ ESO Client                              Python Bot
 | 2 | 4 | `isFishing` | interactableName contains "рыбалк" |
 | 3 | 8 | `reticleHidden` | `IsReticleHidden()` |
 | 4 | 16 | `isSwimming` | `IsUnitSwimming("player")` |
-| 5-7 | — | reserved | — |
+| 5 | 32 | `isHidden` | `GetUnitStealthState("player")` == HIDDEN |
+| 6-7 | — | reserved | — |
 
 **Reading**: Python samples center pixel of each 8x8 block (offset +4,+4) to avoid anti-aliasing edges. Sync marker tolerance: +/-2 per channel.
 
@@ -108,6 +110,7 @@ ESO Client                              Python Bot
 | `GetGameCameraInteractableActionInfo()` | `action, interactableName` | What's under reticle |
 | `IsUnitSwimming("player")` | `bool` | Swimming state |
 | `IsReticleHidden()` | `bool` | Reticle hidden (during cast animation) |
+| `GetUnitStealthState("player")` | `int` | Stealth/invis state (HIDDEN=2) |
 | `EVENT_PLAYER_COMBAT_STATE` | `_, inCombat` | Combat enter/exit |
 | `BitXor(a, b)` | `int` | XOR for checksum (built-in, no zo_ prefix) |
 

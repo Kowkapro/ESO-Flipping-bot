@@ -80,7 +80,7 @@ ROUTE_FILE = os.path.join(os.path.dirname(__file__), "route_holes.json")
 # Combat
 COMBAT_AOE_KEY = '5'           # AoE skill key
 COMBAT_INVIS_KEY = '4'         # Invisibility skill key (flee)
-COMBAT_MAX_PRESSES = 10        # max AoE presses before fleeing
+COMBAT_MAX_PRESSES = 15        # max AoE presses before fleeing
 COMBAT_TIMEOUT = 30.0          # max seconds in combat before giving up
 
 # Stuck recovery escalation — diverse obstacle avoidance
@@ -88,9 +88,12 @@ STUCK_PROGRESS_DIST = 300   # must get this much closer to reset recovery level
 
 RECOVERY_ACTIONS = [
     ("jump",          lambda: _do_jumps(3)),
+    ("jump_left",     lambda: _jump_sideways('a', 3)),
+    ("jump_right",    lambda: _jump_sideways('d', 3)),
     ("sidestep_L",    lambda: _hold_key_for('a', 2.0)),
     ("sidestep_R",    lambda: _hold_key_for('d', 2.0)),
     ("backtrack",     lambda: _hold_key_for('s', 2.0)),
+    ("jump_back",     lambda: _jump_sideways('s', 3)),
     ("diagonal_L",    lambda: _diagonal_walk('a', 3.0)),
     ("diagonal_R",    lambda: _diagonal_walk('d', 3.0)),
     ("wide_arc_L",    lambda: _wide_arc('a', 4.0)),
@@ -103,6 +106,15 @@ def _do_jumps(count):
     for _ in range(count):
         press_key('space')
         time.sleep(random.uniform(0.3, 0.5))
+
+
+def _jump_sideways(key, count):
+    """Jump while holding a direction key — clears rocks and ledges."""
+    pydirectinput.keyDown(key)
+    for _ in range(count):
+        press_key('space')
+        time.sleep(random.uniform(0.5, 0.7))
+    pydirectinput.keyUp(key)
 
 
 def _hold_key_for(key, duration):
@@ -222,10 +234,10 @@ def handle_combat(sct, monitor, stop_flag):
 
 
 def _flee_combat():
-    """Press invisibility to disengage. Navigation loop will walk to target."""
+    """Press invisibility and sprint away. Mob loses aggro in 3-6 sec while invisible."""
     press_key(COMBAT_INVIS_KEY)
     time.sleep(0.3)
-    print("[COMBAT] Fled (invis) — walking to target without sprint")
+    print("[COMBAT] Fled (invis) — sprinting away")
 
 
 # ── Hook detection (mss-based, replaces ImageGrab) ──────────────────
@@ -364,6 +376,8 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
     recovery_level = 0
     last_time = time.time()
     bridge_fail_start = None      # track consecutive bridge failures
+    flee_walking = False          # True = walking after invis, ignoring combat
+    last_invis_time = 0.0         # cooldown for re-applying invis
 
     try:
         while not stop_flag[0]:
@@ -383,15 +397,14 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
 
             dist = distance(state.x, state.y, target_x, target_y)
 
-            # Combat check — stop sprinting, fight or flee, resume
-            if state.in_combat:
+            # Combat check — fight or flee (ignore combat while flee-walking)
+            if state.in_combat and not flee_walking:
                 pydirectinput.keyUp('w')
                 pydirectinput.keyUp('shift')
                 time.sleep(0.1)
                 result = handle_combat(sct, monitor, stop_flag)
                 if stop_flag[0]:
                     return "stopped"
-                # Re-orient and resume sprint
                 state = read_player_state(sct, monitor)
                 if state:
                     rotate_to_target(state, target_x, target_y)
@@ -399,9 +412,24 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
                 time.sleep(0.05)
                 if result == "killed":
                     pydirectinput.keyDown('shift')
+                else:
+                    # Fled — walk only (no sprint, it breaks invis), ignore combat
+                    flee_walking = True
                 prev_x, prev_y = state.x if state else prev_x, state.y if state else prev_y
                 stuck_timer = 0.0
                 continue
+
+            # After flee: re-apply invis if it dropped, resume sprint when combat ends
+            if flee_walking:
+                if not state.in_combat:
+                    flee_walking = False
+                    pydirectinput.keyDown('shift')
+                    print("[COMBAT] Aggro lost — resuming sprint")
+                elif state.in_combat and not state.is_hidden and (now - last_invis_time > 3.0):
+                    print("[COMBAT] Invis dropped — re-applying!")
+                    press_key(COMBAT_INVIS_KEY)
+                    last_invis_time = now
+                    time.sleep(0.3)
 
             # Arrived? — switch to fine positioning
             if dist < ARRIVAL_DIST:
@@ -421,28 +449,24 @@ def navigate_to_hole(hole, sct, monitor, stop_flag):
             if moved < STUCK_MIN_MOVE:
                 stuck_timer += dt
                 if stuck_timer >= STUCK_TIMEOUT:
-                    if recovery_level < len(RECOVERY_ACTIONS):
-                        name, action = RECOVERY_ACTIONS[recovery_level]
-                        print(f"[NAV] Stuck! Recovery: {name} (level {recovery_level})")
-                        # Stop sprinting for recovery
-                        pydirectinput.keyUp('w')
-                        pydirectinput.keyUp('shift')
-                        time.sleep(0.1)
-                        action()
-                        time.sleep(0.2)
-                        # Re-read position and re-orient
-                        state = read_player_state(sct, monitor)
-                        if state:
-                            rotate_to_target(state, target_x, target_y)
-                            prev_x, prev_y = state.x, state.y
-                        # Resume sprint
-                        pydirectinput.keyDown('w')
-                        time.sleep(0.05)
-                        pydirectinput.keyDown('shift')
-                        recovery_level += 1
-                    else:
-                        print("[NAV] All recovery failed — skipping hole")
-                        return "stuck"
+                    name, action = random.choice(RECOVERY_ACTIONS)
+                    recovery_level += 1
+                    print(f"[NAV] Stuck! Recovery: {name} (attempt {recovery_level})")
+                    # Stop sprinting for recovery
+                    pydirectinput.keyUp('w')
+                    pydirectinput.keyUp('shift')
+                    time.sleep(0.1)
+                    action()
+                    time.sleep(0.2)
+                    # Re-read position and re-orient
+                    state = read_player_state(sct, monitor)
+                    if state:
+                        rotate_to_target(state, target_x, target_y)
+                        prev_x, prev_y = state.x, state.y
+                    # Resume sprint
+                    pydirectinput.keyDown('w')
+                    time.sleep(0.05)
+                    pydirectinput.keyDown('shift')
                     stuck_timer = 0.0
             else:
                 stuck_timer = 0.0
