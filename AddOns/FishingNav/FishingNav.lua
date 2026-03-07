@@ -100,8 +100,10 @@ local function PixelUpdate()
     SetBlockColor(2, yH, yM, yL)
     -- Block 3: heading + flags
     SetBlockColor(3, hH, hL, flagByte)
-    -- Block 4: checksum
-    SetBlockColor(4, checksum, 0, 0)
+    -- Block 4: checksum + free inventory slots
+    local freeSlots = GetNumBagFreeSlots(BAG_BACKPACK)
+    freeSlots = math.min(freeSlots, 255)  -- clamp to 1 byte
+    SetBlockColor(4, checksum, freeSlots, 0)
 end
 
 ----------------------------------------------------------------------

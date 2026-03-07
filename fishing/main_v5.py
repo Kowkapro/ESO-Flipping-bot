@@ -33,7 +33,11 @@ import mss
 import numpy as np
 import pydirectinput
 import pyautogui
+import requests
+from dotenv import load_dotenv
 from PIL import ImageGrab
+
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from pixel_bridge import PlayerState, read_player_state
 from main import (
@@ -43,6 +47,25 @@ from main import (
     press_key,
     PIXELS_PER_360,
 )
+
+# Telegram notifications
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+def send_telegram(message):
+    """Send a notification to Telegram."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print(f"[TG] No config, skipping: {message}")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+        requests.post(url, data=data, timeout=10)
+    except Exception:
+        pass
+
+# Inventory
+MIN_FREE_SLOTS = 2              # stop fishing when fewer slots available
 
 # Disconnect recovery
 DISCONNECT_TIMEOUT = 15.0       # seconds of bridge failure → disconnect
@@ -606,6 +629,14 @@ def fish_one_hole(sct, monitor, stop_flag):
     bridge_fail_start = None  # disconnect detection during fishing
 
     while not stop_flag[0]:
+        # Check inventory space
+        state = read_player_state(sct, monitor)
+        if state and state.free_slots < MIN_FREE_SLOTS:
+            msg = f"🎒 Inventory full! ({state.free_slots} slots left). Fish: {fish_caught}"
+            print(f"[INV] {msg}")
+            send_telegram(msg)
+            return fish_caught, casts_made
+
         casts_made += 1
         print(f"  [Cast {casts_made}] Casting line...")
         press_key(CAST_KEY)

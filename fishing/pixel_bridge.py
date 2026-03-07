@@ -19,6 +19,7 @@ class PlayerState:
     reticle_hidden: bool
     is_swimming: bool
     is_hidden: bool
+    free_slots: int = 0  # free inventory slots (BAG_BACKPACK)
 
 
 # Center pixel of each 8x8 block: (x, y) offsets from top-left
@@ -69,6 +70,9 @@ def read_player_state(sct: mss.mss, monitor: dict) -> PlayerState | None:
     heading = heading_int / 65535.0 * 2 * math.pi
     flags = b3
 
+    # Block 4 green channel = free inventory slots
+    free_slots = blocks[4][1]
+
     return PlayerState(
         x=float(world_x),
         y=float(world_y),
@@ -79,6 +83,7 @@ def read_player_state(sct: mss.mss, monitor: dict) -> PlayerState | None:
         reticle_hidden=bool(flags & 8),
         is_swimming=bool(flags & 16),
         is_hidden=bool(flags & 32),
+        free_slots=free_slots,
     )
 
 
@@ -98,7 +103,7 @@ if __name__ == "__main__":
                     f"X={state.x:.0f} Y={state.y:.0f} "
                     f"H={math.degrees(state.heading):.1f}\u00b0 "
                     f"combat={state.in_combat} interact={state.has_interaction} "
-                    f"fish={state.is_fishing} swim={state.is_swimming} hidden={state.is_hidden} reticle={state.reticle_hidden} "
+                    f"fish={state.is_fishing} swim={state.is_swimming} hidden={state.is_hidden} slots={state.free_slots} "
                     f"[ok:{detected} miss:{missed}]",
                     flush=True,
                 )

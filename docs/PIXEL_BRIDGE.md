@@ -59,7 +59,7 @@ ESO Client                              Python Bot
 | 1 | X_high | X_mid | X_low | worldX encoded as 3 bytes (0-16,777,215) |
 | 2 | Y_high | Y_mid | Y_low | worldY encoded as 3 bytes |
 | 3 | H_high | H_low | flags | heading (0-65535 -> 0-2pi) + flags byte |
-| 4 | checksum | `0x00` | `0x00` | XOR of all 9 data bytes (blocks 1-3) |
+| 4 | checksum | freeSlots | `0x00` | XOR of all 9 data bytes (blocks 1-3) + inventory slots |
 
 ### Flags byte (block 3, blue channel)
 
