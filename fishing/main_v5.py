@@ -53,11 +53,11 @@ BTN_IGRAT = (960, 1050)         # "ИГРАТЬ" button (character select, 1920x
 # Fishing constants (from legacy/fishing_bot.py)
 CAST_KEY = 'e'
 LOOT_KEY = 'r'
-SCAN_INTERVAL = 0.05
+SCAN_INTERVAL = 0.01
 MAX_WAIT_FOR_HOOK = 45.0
 MAX_FAILED_CASTS = 3
 DELAY_AFTER_CAST = (1.0, 2.0)
-DELAY_REEL_REACTION = (0.05, 0.2)
+DELAY_REEL_REACTION = (0.02, 0.08)
 DELAY_AFTER_REEL = (1.5, 3.0)
 DELAY_AFTER_LOOT = (0.5, 1.5)
 DELAY_RECAST = (0.3, 0.8)
@@ -206,6 +206,7 @@ def handle_disconnect(sct, monitor):
 
     print("[RECONNECT] FAILED — pixel bridge not available after 30s")
     return False
+
 
 
 # ── Combat ───────────────────────────────────────────────────────────
@@ -602,6 +603,7 @@ def fish_one_hole(sct, monitor, stop_flag):
     fish_caught = 0
     casts_made = 0
     failed_casts = 0
+    bridge_fail_start = None  # disconnect detection during fishing
 
     while not stop_flag[0]:
         casts_made += 1
@@ -614,6 +616,7 @@ def fish_one_hole(sct, monitor, stop_flag):
         hook_start = time.time()
         got_bite = False
         last_debug = 0
+        disconnected = False
 
         while not stop_flag[0]:
             elapsed = time.time() - hook_start
@@ -625,17 +628,30 @@ def fish_one_hole(sct, monitor, stop_flag):
                 last_debug = int(elapsed)
                 # Also check if hole disappeared (depleted mid-wait)
                 state = read_player_state(sct, monitor)
-                if state and not state.is_fishing:
-                    print(f"  [Cast {casts_made}] Hole disappeared while waiting!")
-                    break
+                if state:
+                    bridge_fail_start = None  # reset on success
+                    if not state.is_fishing:
+                        print(f"  [Cast {casts_made}] Hole disappeared while waiting!")
+                        break
+                else:
+                    # Track bridge failures for disconnect detection
+                    if bridge_fail_start is None:
+                        bridge_fail_start = time.time()
+                    elif time.time() - bridge_fail_start > DISCONNECT_TIMEOUT:
+                        print(f"  [Cast {casts_made}] Disconnect detected during fishing!")
+                        disconnected = True
+                        break
             if detect_hook_pil(debug=do_debug):
-                detect_hook_pil(debug=True)  # confirm detection with log
                 got_bite = True
                 break
             time.sleep(SCAN_INTERVAL)
 
         if stop_flag[0]:
             break
+
+        if disconnected:
+            print(f"[FISH] Aborted — disconnect. Fish: {fish_caught}, Casts: {casts_made}")
+            return fish_caught, casts_made
 
         if not got_bite:
             # Check if fishing hole is still visible — if so, just recast
