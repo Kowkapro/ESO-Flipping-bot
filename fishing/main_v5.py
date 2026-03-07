@@ -33,6 +33,7 @@ import mss
 import numpy as np
 import pydirectinput
 import pyautogui
+from PIL import ImageGrab
 
 from pixel_bridge import PlayerState, read_player_state
 from main import (
@@ -54,7 +55,7 @@ CAST_KEY = 'e'
 LOOT_KEY = 'r'
 SCAN_INTERVAL = 0.05
 MAX_WAIT_FOR_HOOK = 45.0
-MAX_FAILED_CASTS = 2
+MAX_FAILED_CASTS = 3
 DELAY_AFTER_CAST = (1.0, 2.0)
 DELAY_REEL_REACTION = (0.05, 0.2)
 DELAY_AFTER_REEL = (1.5, 3.0)
@@ -270,6 +271,19 @@ def detect_hook_mss(sct):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)
     white_pixels = np.sum(gray > HOOK_WHITE_THRESHOLD)
     ratio = white_pixels / gray.size
+    return ratio > HOOK_WHITE_RATIO
+
+
+def detect_hook_pil(debug=False):
+    """Detect white hook icon using ImageGrab (proven reliable in v2)."""
+    x, y, w, h = SCAN_REGION_HOOK
+    img = ImageGrab.grab((x, y, x + w, y + h))
+    frame = np.array(img)
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    white_pixels = np.sum(gray > HOOK_WHITE_THRESHOLD)
+    ratio = white_pixels / gray.size
+    if debug:
+        print(f"    [HOOK DBG] ratio={ratio:.4f} (thr={HOOK_WHITE_RATIO})")
     return ratio > HOOK_WHITE_RATIO
 
 
@@ -599,11 +613,23 @@ def fish_one_hole(sct, monitor, stop_flag):
         print(f"  [Cast {casts_made}] Waiting for bite...")
         hook_start = time.time()
         got_bite = False
+        last_debug = 0
 
         while not stop_flag[0]:
-            if time.time() - hook_start > MAX_WAIT_FOR_HOOK:
+            elapsed = time.time() - hook_start
+            if elapsed > MAX_WAIT_FOR_HOOK:
                 break
-            if detect_hook_mss(sct):
+            # Debug: print ratio every 1s to diagnose false positives
+            do_debug = (int(elapsed) > last_debug)
+            if do_debug:
+                last_debug = int(elapsed)
+                # Also check if hole disappeared (depleted mid-wait)
+                state = read_player_state(sct, monitor)
+                if state and not state.is_fishing:
+                    print(f"  [Cast {casts_made}] Hole disappeared while waiting!")
+                    break
+            if detect_hook_pil(debug=do_debug):
+                detect_hook_pil(debug=True)  # confirm detection with log
                 got_bite = True
                 break
             time.sleep(SCAN_INTERVAL)
@@ -612,6 +638,13 @@ def fish_one_hole(sct, monitor, stop_flag):
             break
 
         if not got_bite:
+            # Check if fishing hole is still visible — if so, just recast
+            state = read_player_state(sct, monitor)
+            if state and state.is_fishing:
+                print(f"  [Cast {casts_made}] No bite, but hole still visible — recasting!")
+                failed_casts = 0
+                time.sleep(random.uniform(*DELAY_RECAST))
+                continue
             failed_casts += 1
             print(f"  [Cast {casts_made}] No bite! (failed: {failed_casts}/{MAX_FAILED_CASTS})")
             if failed_casts >= MAX_FAILED_CASTS:
