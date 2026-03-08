@@ -149,6 +149,12 @@ local function OnPlayerActivated()
     EVENT_MANAGER:RegisterForUpdate(ADDON_NAME, UPDATE_INTERVAL_MS, UpdatePlayerData)
     UpdatePlayerData()
 
+    -- DEBUG: check inventory API
+    local bagSlots = GetNumBagFreeSlots(BAG_BACKPACK)
+    local bagTotal = GetBagSize(BAG_BACKPACK)
+    d("FishingNav DEBUG: BAG_BACKPACK=" .. tostring(BAG_BACKPACK)
+      .. " freeSlots=" .. tostring(bagSlots)
+      .. " totalSlots=" .. tostring(bagTotal))
     d("FishingNav v2: pixel bridge + tracking started")
 end
 

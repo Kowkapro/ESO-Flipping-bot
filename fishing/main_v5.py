@@ -21,6 +21,8 @@ Controls:
   F6 — Stop immediately (releases all keys)
 """
 
+import ctypes
+import ctypes.wintypes
 import json
 import math
 import os
@@ -70,7 +72,7 @@ MIN_FREE_SLOTS = 2              # stop fishing when fewer slots available
 # Disconnect recovery
 DISCONNECT_TIMEOUT = 15.0       # seconds of bridge failure → disconnect
 DISCONNECT_MAX_RETRIES = 3      # max reconnect attempts before giving up
-BTN_VOITI = (960, 490)          # "ВОЙТИ" button (login screen, 1920x1080)
+BTN_VOITI = (960, 648)          # "ВОЙТИ" button center (login screen, 1920x1080, calibrated)
 BTN_IGRAT = (960, 1050)         # "ИГРАТЬ" button (character select, 1920x1080)
 
 # Fishing constants (from legacy/fishing_bot.py)
@@ -183,51 +185,229 @@ def _random_walk(duration):
     pydirectinput.keyUp(key)
 
 
+# ── Win32 mouse click (works with ESO windows) ───────────────────────
+
+_MOUSEEVENTF_LEFTDOWN = 0x0002
+_MOUSEEVENTF_LEFTUP   = 0x0004
+_MOUSEEVENTF_ABSOLUTE = 0x8000
+_MOUSEEVENTF_MOVE     = 0x0001
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.wintypes.LONG), ("dy", ctypes.wintypes.LONG),
+        ("mouseData", ctypes.wintypes.DWORD), ("dwFlags", ctypes.wintypes.DWORD),
+        ("time", ctypes.wintypes.DWORD), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+class _INPUT_CLICK(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("mi", _MOUSEINPUT)]
+    _anonymous_ = ("_u",)
+    _fields_ = [("type", ctypes.wintypes.DWORD), ("_u", _U)]
+
+
+def mouse_click_win32(x, y):
+    """Move cursor to (x, y) and left-click via Win32 SendInput (works with ESO)."""
+    # Move to target position first
+    pyautogui.moveTo(x, y, duration=0.1)
+    time.sleep(0.05)
+
+    # Build absolute coordinates for SendInput (0-65535 range)
+    screen_w = ctypes.windll.user32.GetSystemMetrics(0)
+    screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+    abs_x = int(x * 65535 / screen_w)
+    abs_y = int(y * 65535 / screen_h)
+
+    def _send(flags, dx=0, dy=0):
+        inp = _INPUT_CLICK()
+        inp.type = 0  # INPUT_MOUSE
+        inp.mi.dx = dx
+        inp.mi.dy = dy
+        inp.mi.mouseData = 0
+        inp.mi.dwFlags = flags
+        inp.mi.time = 0
+        inp.mi.dwExtraInfo = ctypes.pointer(ctypes.c_ulong(0))
+        ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+    # Move (absolute) then click
+    _send(_MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE, abs_x, abs_y)
+    time.sleep(0.05)
+    _send(_MOUSEEVENTF_LEFTDOWN | _MOUSEEVENTF_ABSOLUTE, abs_x, abs_y)
+    time.sleep(0.05)
+    _send(_MOUSEEVENTF_LEFTUP | _MOUSEEVENTF_ABSOLUTE, abs_x, abs_y)
+
+
 # ── Disconnect recovery ──────────────────────────────────────────────
 
-def handle_disconnect(sct, monitor):
+# Screen detection sample points (1920x1080)
+# Calibrated from real ESO screenshots (RGB sums):
+#
+# | Point            | Error popup | Login | Char select | Loading |
+# |------------------|-------------|-------|-------------|---------|
+# | (960,350) upper  |  ~247       | ~547  |   scenic    |  ~93    |
+# | (960,480) popup  |  ~30        | ~496  |   scenic    |  ~93    |
+# | (960,540) center |  ~35        | ~529  |   scenic    |  ~93    |
+# | (45,360) menu    |  ~54        | ~119  |   >450      |  ~72    |
+#
+# Key insight: (960,480) = dark on error_popup (inside popup overlay), bright on login
+
+_DETECT_POINTS = {
+    'upper':      (960, 350),  # above popup / scenic background
+    'popup_area': (960, 480),  # inside popup overlay when error screen; scenic on login
+    'center':     (960, 540),  # center of screen
+    'left_menu':  (45, 360),   # ПЕРСОНАЖИ text area (char select)
+}
+
+
+def detect_screen_state():
+    """Detect current ESO screen by sampling pixel colors.
+
+    Returns: 'error_popup' | 'login' | 'char_select' | 'loading' | 'unknown'
+    Note: 'in_game' detection uses pixel bridge, not this function.
+    """
+    img = ImageGrab.grab()
+
+    sum_upper = sum(img.getpixel(_DETECT_POINTS['upper'])[:3])
+    sum_popup = sum(img.getpixel(_DETECT_POINTS['popup_area'])[:3])
+    sum_center = sum(img.getpixel(_DETECT_POINTS['center'])[:3])
+    sum_menu = sum(img.getpixel(_DETECT_POINTS['left_menu'])[:3])
+
+    # Loading screen: ALL points uniformly dark gray (RGB ~31,31,31 = sum ~93)
+    if sum_upper < 120 and sum_popup < 120 and sum_center < 120:
+        return 'loading'
+
+    # Character select: bright "ПЕРСОНАЖИ" text on left side
+    if sum_menu > 450:
+        return 'char_select'
+
+    # Error popup: popup overlay darkens popup_area+center; upper still has scenic brightness
+    # popup_area (960,480) = sum~30 on error, sum~496 on login
+    if sum_popup < 80 and sum_upper > 100:
+        return 'error_popup'
+
+    # Login screen: popup_area is bright (no popup overlay)
+    if sum_popup > 200:
+        return 'login'
+
+    return 'unknown'
+
+
+def handle_disconnect(sct, monitor, stop_flag=None):
     """Handle ESO disconnect: close error → login → select character → load.
 
-    Flow (from screenshots):
+    Uses screen detection (ImageGrab) instead of pixel bridge for steps 1-3,
+    since addons are not active during disconnect screens.
+
+    Flow:
       1. Error popup "ОШИБКА" with [Alt] OK → press Alt
-      2. Click "ВОЙТИ" button (center screen) → wait for server load
-      3. Click "ИГРАТЬ" button (bottom center) → wait for world load
-      4. Wait for pixel bridge to become available
+      2. Click "ВОЙТИ" button → wait for server load
+      3. Click "ИГРАТЬ" button → wait for world load
+      4. Wait for pixel bridge to become available (addons loaded)
     """
+    def stopped():
+        return stop_flag and stop_flag[0]
+
     print("\n" + "!" * 60)
     print("  DISCONNECT DETECTED — starting reconnect...")
     print("!" * 60)
 
-    # Step 1: Close error popup
-    print("[RECONNECT] Step 1/4: Closing error popup (Alt)...")
-    time.sleep(random.uniform(1.0, 2.0))
-    press_key('alt')
-    time.sleep(random.uniform(1.5, 2.5))
+    # Step 1: Close error popup (if present)
+    screen = detect_screen_state()
+    print(f"[RECONNECT] Screen state: {screen}")
 
-    # Step 2: Click "ВОЙТИ"
-    print("[RECONNECT] Step 2/4: Clicking 'ВОЙТИ'...")
-    pyautogui.click(*BTN_VOITI)
-    wait = random.uniform(18, 25)
-    print(f"[RECONNECT] Waiting {wait:.0f}s for server load...")
-    time.sleep(wait)
+    if screen == 'error_popup':
+        print("[RECONNECT] Step 1/4: Closing error popup (Alt)...")
+        time.sleep(random.uniform(1.0, 2.0))
+        if stopped():
+            return False
+        press_key('alt')
+        # Wait for popup to close, verify we're on login screen
+        for _ in range(10):
+            time.sleep(0.5)
+            if stopped():
+                return False
+            screen = detect_screen_state()
+            if screen != 'error_popup':
+                break
+        print(f"[RECONNECT] After Alt: {screen}")
+    elif screen == 'login':
+        print("[RECONNECT] Step 1/4: No error popup, already on login screen")
+    elif screen == 'char_select':
+        print("[RECONNECT] Step 1/4: Already on character select, skipping to step 3")
 
-    # Step 3: Click "ИГРАТЬ"
-    print("[RECONNECT] Step 3/4: Clicking 'ИГРАТЬ'...")
-    pyautogui.click(*BTN_IGRAT)
-    wait = random.uniform(12, 18)
-    print(f"[RECONNECT] Waiting {wait:.0f}s for world load...")
-    time.sleep(wait)
+    # Step 2: Click "ВОЙТИ" (if on login screen)
+    if stopped():
+        return False
+    screen = detect_screen_state()
+    if screen == 'login':
+        print("[RECONNECT] Step 2/4: Clicking 'ВОЙТИ'...")
+        mouse_click_win32(*BTN_VOITI)
+        # Wait for loading → character select
+        print("[RECONNECT] Waiting for character select screen...")
+        for i in range(60):  # up to 60s
+            if stopped():
+                return False
+            time.sleep(1.0)
+            screen = detect_screen_state()
+            if screen == 'char_select':
+                print(f"[RECONNECT] Character select loaded after {i+1}s")
+                break
+            if i % 5 == 0:
+                print(f"  Waiting... {i+1}s (screen: {screen})")
+        else:
+            print("[RECONNECT] Step 2 timeout — char select not detected after 60s")
+            return False
+    elif screen != 'char_select':
+        print(f"[RECONNECT] Step 2/4: Unexpected screen state: {screen}")
+        # Try clicking ВОЙТИ anyway
+        mouse_click_win32(*BTN_VOITI)
+        time.sleep(random.uniform(18, 25))
+
+    # Step 3: Click "ИГРАТЬ" (if on character select)
+    if stopped():
+        return False
+    screen = detect_screen_state()
+    if screen == 'char_select':
+        print("[RECONNECT] Step 3/4: Clicking 'ИГРАТЬ'...")
+        time.sleep(random.uniform(0.5, 1.5))
+        mouse_click_win32(*BTN_IGRAT)
+        # Wait for loading to finish → pixel bridge becomes available
+        print("[RECONNECT] Waiting for world load...")
+        for i in range(60):  # up to 60s
+            if stopped():
+                return False
+            time.sleep(1.0)
+            # First check pixel bridge (fastest signal that we're in game)
+            state = read_player_state(sct, monitor)
+            if state:
+                print(f"[RECONNECT] SUCCESS! Player at ({state.x:.0f}, {state.y:.0f})")
+                return True
+            if i % 5 == 0:
+                screen = detect_screen_state()
+                print(f"  Waiting... {i+1}s (screen: {screen})")
+        print("[RECONNECT] Step 3 timeout — world not loaded after 60s")
+        return False
+    else:
+        print(f"[RECONNECT] Step 3/4: Unexpected screen: {screen}, trying ИГРАТЬ anyway...")
+        mouse_click_win32(*BTN_IGRAT)
 
     # Step 4: Wait for pixel bridge
+    if stopped():
+        return False
     print("[RECONNECT] Step 4/4: Waiting for pixel bridge...")
-    for i in range(30):
+    for i in range(120):
+        if stopped():
+            return False
         state = read_player_state(sct, monitor)
         if state:
             print(f"[RECONNECT] SUCCESS! Player at ({state.x:.0f}, {state.y:.0f})")
             return True
         time.sleep(1.0)
+        if i % 10 == 9:
+            print(f"  Waiting... {i+1}/120s")
 
-    print("[RECONNECT] FAILED — pixel bridge not available after 30s")
+    print("[RECONNECT] FAILED — pixel bridge not available after 120s")
     return False
 
 
@@ -615,7 +795,7 @@ def fine_position(target_x, target_y, sct, monitor, stop_flag):
 def fish_one_hole(sct, monitor, stop_flag):
     """Fish at current hole until depleted or stopped.
 
-    Returns: (fish_caught, casts_made)
+    Returns: (fish_caught, casts_made, inventory_full)
     """
     print()
     print("=" * 40)
@@ -629,13 +809,15 @@ def fish_one_hole(sct, monitor, stop_flag):
     bridge_fail_start = None  # disconnect detection during fishing
 
     while not stop_flag[0]:
-        # Check inventory space
+        # Check inventory space (flush mss cache with double-read)
+        read_player_state(sct, monitor)
+        time.sleep(0.05)
         state = read_player_state(sct, monitor)
         if state and state.free_slots < MIN_FREE_SLOTS:
             msg = f"🎒 Inventory full! ({state.free_slots} slots left). Fish: {fish_caught}"
             print(f"[INV] {msg}")
             send_telegram(msg)
-            return fish_caught, casts_made
+            return fish_caught, casts_made, True
 
         casts_made += 1
         print(f"  [Cast {casts_made}] Casting line...")
@@ -682,7 +864,7 @@ def fish_one_hole(sct, monitor, stop_flag):
 
         if disconnected:
             print(f"[FISH] Aborted — disconnect. Fish: {fish_caught}, Casts: {casts_made}")
-            return fish_caught, casts_made
+            return fish_caught, casts_made, False
 
         if not got_bite:
             # Check if fishing hole is still visible — if so, just recast
@@ -723,7 +905,7 @@ def fish_one_hole(sct, monitor, stop_flag):
             print(f"\n[FISH] Hole depleted! Fish: {fish_caught}, Casts: {casts_made}")
             break
 
-    return fish_caught, casts_made
+    return fish_caught, casts_made, False
 
 
 LOOK_STEPS = 12           # 360° / 12 = 30° per step
@@ -833,13 +1015,11 @@ def main():
     idx = best_idx
     bridge_fail_start = None      # track bridge failures in main loop
 
+    printed_hole_header = False
+
     while not stop_flag[0]:
         hole = holes[idx]
         hole_label = f"Lap {lap}, Hole {idx + 1}/{len(holes)}"
-        print()
-        print("#" * 60)
-        print(f"  {hole_label}")
-        print("#" * 60)
 
         # Read current position
         state = read_player_state(sct, monitor)
@@ -853,19 +1033,40 @@ def main():
                 bridge_fail_start = None
                 ok = False
                 for attempt in range(1, DISCONNECT_MAX_RETRIES + 1):
+                    if stop_flag[0]:
+                        break
                     print(f"[RECONNECT] Attempt {attempt}/{DISCONNECT_MAX_RETRIES}")
-                    if handle_disconnect(sct, monitor):
+                    if handle_disconnect(sct, monitor, stop_flag):
                         ok = True
                         reconnect_count += 1
                         break
                     print(f"[RECONNECT] Attempt {attempt} failed, retrying...")
                 if not ok:
-                    print("[RECONNECT] All attempts failed — stopping bot")
+                    if not stop_flag[0]:
+                        print("[RECONNECT] All attempts failed — stopping bot")
                     break
+                printed_hole_header = False  # re-print header after reconnect
                 continue  # re-read state and resume from current hole
             time.sleep(1.0)
             continue
         bridge_fail_start = None  # reset on success
+
+        if not printed_hole_header:
+            print()
+            print("#" * 60)
+            print(f"  {hole_label}")
+            print("#" * 60)
+            printed_hole_header = True
+
+        # Check inventory before navigating to next hole (flush mss cache)
+        read_player_state(sct, monitor)
+        time.sleep(0.05)
+        inv_state = read_player_state(sct, monitor)
+        if inv_state and inv_state.free_slots < MIN_FREE_SLOTS:
+            msg = f"🎒 Inventory full! ({inv_state.free_slots} slots left). Stopping bot."
+            print(f"[INV] {msg}")
+            send_telegram(msg)
+            break
 
         dist = distance(state.x, state.y, hole["x"], hole["y"])
         print(f"[HOLE] Target: ({hole['x']}, {hole['y']}), dist={dist:.0f}")
@@ -899,11 +1100,13 @@ def main():
             found = look_for_fishing_hole(sct, monitor, stop_flag)
             if found and not stop_flag[0]:
                 time.sleep(random.uniform(0.3, 0.5))
-                fish, casts = fish_one_hole(sct, monitor, stop_flag)
+                fish, casts, inv_full = fish_one_hole(sct, monitor, stop_flag)
                 total_fish += fish
                 total_casts += casts
                 fished_count += 1
                 print(f"[DONE] {hole_label}: caught {fish} fish")
+                if inv_full:
+                    break
             else:
                 skipped_count += 1
                 print(f"[SKIP] {hole_label} — no fishing hole found")
@@ -918,6 +1121,7 @@ def main():
 
         # Next hole (cyclic)
         idx = (idx + 1) % len(holes)
+        printed_hole_header = False
         if idx == best_idx:
             print(f"\n[LAP] Lap {lap} complete!")
             lap += 1
@@ -954,4 +1158,7 @@ if __name__ == "__main__":
             pydirectinput.keyUp('shift')
         except Exception:
             pass
-        input("\nPress Enter to exit...")
+        try:
+            input("\nPress Enter to exit...")
+        except EOFError:
+            pass
